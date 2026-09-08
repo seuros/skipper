@@ -1,0 +1,59 @@
+# Skipper Configuration
+#
+# Copy to `skipper.toml` in your repo root or `~/.config/skipper/config.toml` globally.
+# Local config overrides global config.
+
+# Default provider for this repo (optional)
+# default_provider = "gitlab"
+
+# Remote host -> forge.
+#
+# This is what decides which tools skipper exposes. A forge's tools appear
+# only when the workspace is a git repository whose remotes point at that
+# forge (and its CLI is installed and authenticated) — having `gh` installed
+# does not put GitHub tools in front of a Forgejo checkout.
+#
+# github.com, gitlab.com, and codeberg.org are recognized without config.
+# Add self-hosted instances here; put them in the global config
+# (~/.config/skipper/config.toml) so every repo on that host is covered.
+#
+# Forge names: github/gh, gitlab/glab, gitea/forgejo/tea.
+
+# [hosts]
+# "github.enterprise.com" = "github"
+# "gitlab.internal" = "gitlab"
+# "192.168.3.20" = "forgejo"
+# "git.example.com" = "gitea"
+
+# Remote configurations
+# Map git remotes to providers with custom settings
+
+# [remotes.origin]
+# provider = "gitea"
+# url = "https://git.example.com"
+# cli_args = ["--insecure"]
+
+# [remotes.upstream]
+# provider = "github"
+
+# Provider-specific settings
+
+[providers.github]
+# url = "https://github.mycompany.com"  # GitHub Enterprise
+# default_org = "myorg"
+# disabled = false
+
+[providers.gitlab]
+# url = "https://gitlab.mycompany.com"  # Self-hosted GitLab
+# default_org = "mygroup"
+# disabled = false
+
+[providers.gitea]
+# url = "https://gitea.mycompany.com"
+# default_org = "myorg"
+# disabled = false
+
+[providers.forgejo]
+# url = "https://codeberg.org"  # or your self-hosted Forgejo
+# default_org = "myorg"
+# disabled = false
