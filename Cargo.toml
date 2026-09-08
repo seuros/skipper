@@ -1,0 +1,43 @@
+[package]
+name = "skipper"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.98"
+authors = ["Abdelkader Boudih"]
+description = "MCP server for git repositories: local git in-process via gitoxide, plus GitHub, GitLab, Gitea and Forgejo through their CLIs"
+license = "BSD-2-Clause"
+repository = "https://github.com/seuros/skipper"
+keywords = ["mcp", "git", "github", "gitlab", "forgejo"]
+categories = ["development-tools", "command-line-utilities"]
+exclude = ["/tests", "**/tests.rs"]
+
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "time", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1.0"
+semver = "1"
+thiserror = "2"
+mcp-host = { version = "0.5.2", features = ["macros"] }
+schemars = "1.2.1"
+jiff = { version = "0.2", features = ["serde"] }
+tracing = "0.1"
+urlencoding = "2"
+rama = { version = "0.4.0", default-features = false, features = ["std", "http", "tcp", "rustls", "tls", "http-backend", "dns"] }
+serde_yaml_ng = "0.10"
+similar = "3.2.0"
+url = "2.5.8"
+gix = { version = "=0.87.1", features = ["max-performance-safe", "blob-diff", "status", "revision"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio-test = "0.4"
+tracing-subscriber = "0.3"
+
+[features]
+default = ["github", "gitlab", "tea"]
+github = []
+gitlab = []
+tea = []

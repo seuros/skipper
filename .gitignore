@@ -1,0 +1,8 @@
+mcp-gitea/
+mcp-github/
+mcp-gitlab/
+mcp-servers-official/
+target/
+*.swp
+.DS_Store
+.dictator/
