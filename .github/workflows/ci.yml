@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TERM_PROGRESS_WHEN: never
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: seuros/dictator-setup@master
+
+      - name: Dictator
+        run: dictator lint .
+
+  build:
+    name: fmt, clippy, test, features, package
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v4
+        with:
+          cache: true
+
+      - uses: jdx/mr-boxington-action@v1
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: mbx clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: mbx test --all-features
+
+      # Each forge is opt-in and must build alone. --all-features is absent on
+      # purpose: clippy above already compiled it.
+      - name: Feature combinations
+        run: |
+          set -euxo pipefail
+          mbx check --no-default-features
+          for feature in github gitlab tea; do
+            mbx check --no-default-features --features "$feature"
+          done
+
+      # Unit tests live in <mod>/tests.rs and are excluded from the package,
+      # so confirm the published crate still builds without them.
+      - name: Publishable crate
+        run: cargo publish --dry-run
