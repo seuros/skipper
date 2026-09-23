@@ -55,6 +55,9 @@ under a non-interactive server. `tea login add` is still how you set it up.
 
 ## Requirements
 
+Building from source requires Rust 1.98 or newer. The repository pins Rust 1.98.1
+for local and release builds.
+
 | Provider | CLI | Minimum | Auth |
 |----------|-----|---------|------|
 | GitHub | `gh` | 2.50 | `gh auth login` |
