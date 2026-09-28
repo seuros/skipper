@@ -145,3 +145,17 @@ fn test_auth_network_failure_is_unknown_not_logged_out() {
     assert!(host(r#"{"state":"timeout","error":"i/o timeout"}"#).is_err());
     assert!(host(r#"{"state":"error","error":"read: connection reset by peer"}"#).is_err());
 }
+
+#[test]
+fn test_api_response_parse() {
+    let not_modified = "HTTP/2.0 304 Not Modified\r\nEtag: W/\"abc\"\r\nX-Ratelimit-Remaining: 4983\r\nX-Ratelimit-Reset: 1790000000\r\n\r\n";
+    let r = ApiResponse::parse(not_modified).unwrap();
+    assert_eq!(
+        (r.status, r.etag.as_deref(), r.rate_remaining),
+        (304, Some("W/\"abc\""), Some(4983))
+    );
+
+    let ok = ApiResponse::parse("HTTP/2.0 200 OK\r\nRetry-After: 30\r\n\r\n{\"n\":1}").unwrap();
+    assert_eq!((ok.status, ok.retry_after, ok.body.as_str()), (200, Some(30), "{\"n\":1}"));
+    assert!(ApiResponse::parse("gh: connection reset").is_none());
+}

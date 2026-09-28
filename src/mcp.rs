@@ -92,6 +92,8 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
             #[cfg(feature = "tea")]
             cwd: cwd.clone(),
             env: env.clone(),
+            #[cfg(feature = "github")]
+            pr_watcher: crate::pr_watch::PrWatcher::new(env.clone()),
         }),
     );
 

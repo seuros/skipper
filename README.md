@@ -149,6 +149,7 @@ Skipper speaks MCP over stdio. Add it to your client config:
 | `build_status` | GitHub/GitLab | CI run or pipeline status for the current repository |
 | `build_watch` | GitHub/GitLab | Wait for a CI run's status to change, up to a bounded time |
 | `pr_build_wait` | GitHub | Wait for a PR's checks to finish; structured verdict (task-capable) |
+| `pr_watch` | GitHub | Watch PRs for merge, close, comments, reviews, checks, and pushes (task-capable) |
 | `git_status` | git | Staged, unstaged, and untracked files |
 | `git_diff` | git | Scoped patches, stats, or changed paths |
 | `git_log` | git | Recent commits |
@@ -169,6 +170,7 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://workspace` | any | The current workspace: working directory, repo root, branch, HEAD, dirty state, remotes (credentials stripped) and the forge each maps to |
 | `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, resolved through `origin` when several match |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
+| `skipper://watch` | GitHub | PRs under `pr_watch`: status, checks, recent and undelivered events |
 
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server
@@ -192,6 +194,24 @@ pending snapshot rather than an error.
 The `skipper://pr/{number}/checks` resource template returns the check
 matrix for any PR (checks grouped by workflow with bucket, timing, and
 links), and `skipper://pr/current/checks` resolves the current branch's PR.
+
+## PR watching (GitHub)
+
+`pr_watch` keeps one watch per server. The first call blocks until
+something happens on any watched PR (up to `wait_secs`), then returns the
+events. A `pr_watch` call made while another one blocks only adds its PR and
+returns at once; the blocking call reports that PR's events too. Merged,
+closed, and unreadable PRs always wake the call and leave the watch; `until`
+picks which of `comment`, `review`, `checks`, and `push` also do. Read
+`skipper://watch` for the current state without blocking or consuming events.
+
+It is built not to hammer the API. Every read carries the last ETag, so an
+unchanged PR costs a free `304`; comments and reviews are fetched only after
+the PR itself changed. Each PR polls every 10s, backing off to 2 minutes while
+quiet (5 when no call waits) and back to 10s on any change; running checks
+cap it at 30s. `Retry-After` and a low `X-RateLimit-Remaining` stretch it
+further, and a process-wide token bucket caps the request rate. A watch with
+no calls or resource reads for 30 minutes stops.
 
 ## Configuration
 

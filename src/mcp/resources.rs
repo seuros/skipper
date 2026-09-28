@@ -27,6 +27,20 @@ impl SkipperServer {
         Ok(vec![text_resource_with_mime("skipper://workspace", json, "application/json")])
     }
 
+    #[cfg(feature = "github")]
+    #[mcp_resource(
+        uri = "skipper://watch",
+        name = "watch",
+        description = "Watched PRs: status, checks, recent events, undelivered events, whether a pr_watch call blocks. Read-only; does not consume events",
+        mime_type = "application/json",
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
+    )]
+    pub(crate) async fn watch(&self, _ctx: Ctx<'_>) -> ResourceResult {
+        let json = serde_json::to_string_pretty(&self.pr_watcher.view())
+            .map_err(|e| ResourceError::Internal(e.to_string()))?;
+        Ok(vec![text_resource_with_mime("skipper://watch", json, "application/json")])
+    }
+
     #[cfg(feature = "tea")]
     #[mcp_resource(
         uri = "skipper://repo",
