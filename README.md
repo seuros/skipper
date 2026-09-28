@@ -166,6 +166,10 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, resolved through `origin` when several match |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
 
+Claude Code never lists MCP resources to its model, so for `claude-code`
+clients skipper appends the resources visible to that session to its server
+instructions. Other clients get the plain instructions.
+
 ## Build monitoring
 
 `build_watch` blocks until the run's status changes or `wait_secs` elapses

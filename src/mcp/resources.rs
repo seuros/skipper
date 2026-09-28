@@ -31,7 +31,7 @@ impl SkipperServer {
     #[mcp_resource(
         uri = "skipper://repo",
         name = "repo",
-        description = "The Gitea/Forgejo repository this workspace's remote points at",
+        description = "Gitea/Forgejo repo of this workspace's remote",
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:tea\").is_some()).unwrap_or(false)"
     )]
@@ -77,7 +77,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/checks",
         name = "pr_checks",
         title = "PR check matrix",
-        description = "Checks for a GitHub PR grouped by workflow, with bucket, timing, links, and an overall conclusion. Use `current` as the number for the current branch's PR",
+        description = "GitHub PR checks by workflow: bucket, timing, links, conclusion. number=current for this branch's PR",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_checks(&self, ctx: Ctx<'_>) -> ResourceResult {

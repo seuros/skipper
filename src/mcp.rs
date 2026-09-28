@@ -1,4 +1,5 @@
 pub mod git;
+pub mod instructions;
 pub mod resources;
 pub mod tools;
 
@@ -16,18 +17,6 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-
-pub const SERVER_INSTRUCTIONS: &str = "\
-Use skipper for git and forge work in this workspace: local git, repository
-metadata, CI runs, and pull request checks. Prefer it over running git, gh,
-glab, or tea yourself.
-
-Resources, read by URI:
-
-  skipper://workspace            cwd, repo root, branch, HEAD, remotes
-  skipper://repo                 the repository this workspace points at
-  skipper://pr/{number}/checks   a PR's checks grouped by workflow;
-                                 use `current` for this branch's PR";
 
 pub struct McpEnvironment {
     env: Arc<SkipperEnvironment>,
@@ -86,7 +75,8 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     let manager = Arc::new(WatcherManager::new(tx));
 
     let server = Server::builder("skipper", env!("CARGO_PKG_VERSION"))
-        .with_instructions(SERVER_INSTRUCTIONS)
+        .with_instructions(instructions::BASE)
+        .with_instructions_provider(instructions::for_client)
         .with_tools(true)
         .with_resources(false, false)
         .with_resource_templates()
