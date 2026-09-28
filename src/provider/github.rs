@@ -114,6 +114,25 @@ impl Provider for GitHubProvider {
 }
 
 impl GitHubProvider {
+    /// GET through `gh api`, conditional on `etag` when given. Any HTTP status
+    /// comes back as `Ok`; only a failure to get a response is an `Err`.
+    pub async fn api_get(&self, host: &str, path: &str, etag: Option<&str>) -> Result<ApiResponse> {
+        let condition = etag.map(|etag| format!("If-None-Match: {etag}"));
+        let mut args = vec!["api", "-i", "-H", "Accept: application/vnd.github+json"];
+        if host != "github.com" {
+            args.extend(["--hostname", host]);
+        }
+        if let Some(condition) = &condition {
+            args.extend(["-H", condition.as_str()]);
+        }
+        args.push(path);
+
+        let output = executor::execute(self.cli(), &args, Duration::from_secs(20)).await?;
+        ApiResponse::parse(&output.stdout).ok_or_else(|| {
+            CliError::execution_failed(self.cli(), output.code, output.stderr.trim())
+        })
+    }
+
     pub async fn pr_checks(&self, pr: Option<u64>) -> Result<Vec<PrCheck>> {
         let pr_str;
         let mut args = vec!["pr", "checks"];
@@ -171,6 +190,47 @@ impl GitHubProvider {
         }
 
         output.json(self.cli())
+    }
+}
+
+/// A `gh api -i` response. 304 means the ETag still matches: nothing changed,
+/// and GitHub did not count the request against the rate limit.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ApiResponse {
+    pub status: u16,
+    pub etag: Option<String>,
+    pub body: String,
+    pub rate_remaining: Option<u64>,
+    /// Epoch seconds when the rate window resets.
+    pub rate_reset: Option<u64>,
+    pub retry_after: Option<u64>,
+}
+
+impl ApiResponse {
+    /// Parse `gh api -i` output: status line, headers, blank line, body.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let (head, body) =
+            raw.split_once("\r\n\r\n").or_else(|| raw.split_once("\n\n")).unwrap_or((raw, ""));
+        let mut lines = head.lines();
+        let status =
+            lines.next()?.strip_prefix("HTTP/")?.split_whitespace().nth(1)?.parse().ok()?;
+
+        let mut response = Self { status, body: body.to_string(), ..Self::default() };
+        for (name, value) in lines.filter_map(|line| line.split_once(':')) {
+            let value = value.trim();
+            match name.trim().to_ascii_lowercase().as_str() {
+                "etag" => response.etag = Some(value.to_string()),
+                "x-ratelimit-remaining" => response.rate_remaining = value.parse().ok(),
+                "x-ratelimit-reset" => response.rate_reset = value.parse().ok(),
+                "retry-after" => response.retry_after = value.parse().ok(),
+                _ => {}
+            }
+        }
+        Some(response)
+    }
+
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_str(&self.body).map_err(|e| CliError::json("gh", e))
     }
 }
 

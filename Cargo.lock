@@ -3915,6 +3915,7 @@ dependencies = [
  "similar",
  "tempfile",
  "thiserror",
+ "throttle-machines",
  "tokio",
  "tokio-test",
  "toml",

@@ -8,6 +8,8 @@ pub mod gh_repo_list;
 pub mod glab_project_list;
 #[cfg(feature = "github")]
 pub mod pr_build_wait;
+#[cfg(feature = "github")]
+pub mod pr_watch;
 #[cfg(feature = "tea")]
 pub mod repo_search;
 
@@ -29,6 +31,8 @@ pub struct SkipperServer {
     #[cfg(feature = "tea")]
     pub(crate) cwd: std::path::PathBuf,
     pub(crate) env: Arc<crate::environment::SkipperEnvironment>,
+    #[cfg(feature = "github")]
+    pub(crate) pr_watcher: Arc<crate::pr_watch::PrWatcher>,
 }
 
 #[cfg(any(feature = "github", feature = "gitlab"))]
@@ -116,6 +120,11 @@ pub fn router() -> McpRouter<SkipperServer> {
                 SkipperServer::pr_build_wait_tool_info(),
                 SkipperServer::pr_build_wait_handler,
                 Some(SkipperServer::pr_build_wait_visibility),
+            )
+            .with_tool(
+                SkipperServer::pr_watch_tool_info(),
+                SkipperServer::pr_watch_handler,
+                Some(SkipperServer::pr_watch_visibility),
             );
     }
 
@@ -158,6 +167,15 @@ pub fn router() -> McpRouter<SkipperServer> {
         SkipperServer::workspace_handler,
         None,
     );
+
+    #[cfg(feature = "github")]
+    {
+        resources = resources.with_resource(
+            SkipperServer::watch_resource_info(),
+            SkipperServer::watch_handler,
+            Some(SkipperServer::watch_visibility),
+        );
+    }
 
     #[cfg(feature = "tea")]
     {

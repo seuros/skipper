@@ -4,6 +4,8 @@ pub mod error;
 pub mod executor;
 pub mod git;
 pub mod mcp;
+#[cfg(feature = "github")]
+pub mod pr_watch;
 pub mod provider;
 pub mod remote;
 pub mod version;
