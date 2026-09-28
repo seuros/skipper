@@ -8,6 +8,7 @@ pub mod provider;
 pub mod remote;
 pub mod version;
 pub mod watcher;
+pub mod workspace;
 
 pub mod prelude {
     pub use crate::config::Config;

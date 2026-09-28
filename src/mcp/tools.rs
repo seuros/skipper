@@ -16,7 +16,6 @@ use mcp_host::prelude::*;
 use schemars::JsonSchema;
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 use serde::Deserialize;
-#[cfg(any(feature = "github", feature = "gitlab"))]
 use std::sync::Arc;
 
 #[cfg(any(feature = "github", feature = "gitlab"))]
@@ -29,7 +28,6 @@ pub struct SkipperServer {
     pub(crate) registry: Registry,
     #[cfg(feature = "tea")]
     pub(crate) cwd: std::path::PathBuf,
-    #[cfg(any(feature = "github", feature = "gitlab"))]
     pub(crate) env: Arc<crate::environment::SkipperEnvironment>,
 }
 
@@ -155,7 +153,11 @@ pub fn router() -> McpRouter<SkipperServer> {
     }
 
     #[allow(unused_mut)]
-    let mut resources = McpResourceRouter::new();
+    let mut resources = McpResourceRouter::new().with_resource(
+        SkipperServer::workspace_resource_info(),
+        SkipperServer::workspace_handler,
+        None,
+    );
 
     #[cfg(feature = "tea")]
     {

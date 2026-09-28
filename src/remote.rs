@@ -47,6 +47,21 @@ pub fn host_of(url: &str) -> Option<String> {
     if host.is_empty() { None } else { Some(host.to_lowercase()) }
 }
 
+/// Strip userinfo from scheme URLs, where tokens get embedded
+/// (`https://user:token@host/...`). scp-style `user@host:path` cannot carry a
+/// password, and local paths have no authority; both come back unchanged.
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{host}{tail}"),
+        None => url.to_string(),
+    }
+}
+
 pub fn repo_path_of(url: &str) -> Option<(String, String)> {
     let url = url.trim();
 

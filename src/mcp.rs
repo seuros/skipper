@@ -24,6 +24,7 @@ glab, or tea yourself.
 
 Resources, read by URI:
 
+  skipper://workspace            cwd, repo root, branch, HEAD, remotes
   skipper://repo                 the repository this workspace points at
   skipper://pr/{number}/checks   a PR's checks grouped by workflow;
                                  use `current` for this branch's PR";
@@ -101,7 +102,6 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
             registry,
             #[cfg(feature = "tea")]
             cwd: cwd.clone(),
-            #[cfg(any(feature = "github", feature = "gitlab"))]
             env: env.clone(),
         }),
     );

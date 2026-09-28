@@ -1,10 +1,32 @@
 use super::tools::SkipperServer;
-#[cfg(any(feature = "github", feature = "tea"))]
 use mcp_host::prelude::*;
 #[cfg(any(feature = "github", feature = "tea"))]
 use serde_json::Value;
 
 impl SkipperServer {
+    #[mcp_resource(
+        uri = "skipper://workspace",
+        name = "workspace",
+        description = "Workspace: cwd, repo root, branch, HEAD, dirty, remotes (no credentials) with forge. repo=null outside git",
+        mime_type = "application/json"
+    )]
+    pub(crate) async fn workspace(&self, _ctx: Ctx<'_>) -> ResourceResult {
+        use crate::environment::Environment as _;
+
+        let env = self.env.clone();
+        let snapshot =
+            crate::git::tools::execute_blocking(env.cwd().to_path_buf(), (), move |_, ()| {
+                crate::workspace::snapshot(&env).map_err(|e| e.to_string())
+            })
+            .await
+            .map_err(ResourceError::Read)?;
+
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| ResourceError::Internal(e.to_string()))?;
+
+        Ok(vec![text_resource_with_mime("skipper://workspace", json, "application/json")])
+    }
+
     #[cfg(feature = "tea")]
     #[mcp_resource(
         uri = "skipper://repo",

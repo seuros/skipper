@@ -28,6 +28,25 @@ fn test_host_of_rejects_local_paths() {
 }
 
 #[test]
+fn test_redact_url_strips_userinfo() {
+    assert_eq!(
+        redact_url("https://x-access-token:s3cr3t@github.com/o/r.git"),
+        "https://github.com/o/r.git"
+    );
+    assert_eq!(redact_url("https://oauth2@gitlab.com/g/p"), "https://gitlab.com/g/p");
+    assert_eq!(
+        redact_url("ssh://git@192.168.3.20:12222/seuros/skipper.git"),
+        "ssh://192.168.3.20:12222/seuros/skipper.git"
+    );
+    assert_eq!(redact_url("https://host"), "https://host");
+    // `@` past the authority belongs to the path.
+    assert_eq!(redact_url("https://host/@scope/repo"), "https://host/@scope/repo");
+    // scp-style and local paths cannot carry a password.
+    assert_eq!(redact_url("git@github.com:o/r.git"), "git@github.com:o/r.git");
+    assert_eq!(redact_url("/srv/git/r.git"), "/srv/git/r.git");
+}
+
+#[test]
 fn test_normalize_provider_aliases() {
     assert_eq!(normalize_provider("gh"), Some("github"));
     assert_eq!(normalize_provider("GitHub"), Some("github"));

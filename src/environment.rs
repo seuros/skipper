@@ -85,6 +85,10 @@ impl SkipperEnvironment {
     pub fn unknown_hosts(&self) -> BTreeSet<String> {
         self.state().unknown_hosts
     }
+
+    pub fn forge_for_url(&self, url: &str) -> Option<&'static str> {
+        self.hosts.provider_for_url(url)
+    }
 }
 
 impl Environment for SkipperEnvironment {

@@ -162,6 +162,7 @@ scoped by the workspace's remotes rather than your account.
 
 | URI | Provider | Contents |
 |-----|----------|----------|
+| `skipper://workspace` | any | The current workspace: working directory, repo root, branch, HEAD, dirty state, remotes (credentials stripped) and the forge each maps to |
 | `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, resolved through `origin` when several match |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
 
