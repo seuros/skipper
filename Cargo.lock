@@ -3902,6 +3902,7 @@ dependencies = [
 name = "skipper"
 version = "0.2.0"
 dependencies = [
+ "chrono-machines",
  "gix",
  "jiff",
  "mcp-host",

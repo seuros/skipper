@@ -47,6 +47,9 @@ async fn test_github_detection() {
         ProviderStatus::AuthRequired => {
             println!("GitHub CLI not authenticated - run 'gh auth login'");
         }
+        ProviderStatus::Unreachable => {
+            println!("probe timed out or network failed - skipping");
+        }
     }
 }
 
@@ -73,6 +76,9 @@ async fn test_tea_detection() {
         }
         ProviderStatus::AuthRequired => {
             println!("Tea CLI not authenticated - run 'tea login'");
+        }
+        ProviderStatus::Unreachable => {
+            println!("probe timed out or network failed - skipping");
         }
     }
 }
@@ -101,12 +107,15 @@ async fn test_gitlab_detection() {
         ProviderStatus::AuthRequired => {
             println!("GitLab CLI not authenticated - run 'glab auth login'");
         }
+        ProviderStatus::Unreachable => {
+            println!("probe timed out or network failed - skipping");
+        }
     }
 }
 
 #[tokio::test]
 async fn test_registry_detect_all() {
-    let mut registry = Registry::with_defaults();
+    let registry = Registry::with_defaults();
     let results = registry.detect_all().await;
 
     println!("\n=== Provider Detection Results ===");
@@ -124,6 +133,9 @@ async fn test_registry_detect_all() {
             ProviderStatus::AuthRequired => {
                 println!("! {}: not authenticated", name);
             }
+            ProviderStatus::Unreachable => {
+                println!("probe timed out or network failed - skipping");
+            }
         }
     }
     println!("===================================\n");
@@ -140,10 +152,10 @@ async fn test_registry_detect_all() {
 
 #[tokio::test]
 async fn test_enabled_providers_execute() {
-    let mut registry = Registry::with_defaults();
+    let registry = Registry::with_defaults();
     registry.detect_all().await;
 
-    for provider in registry.enabled() {
+    for provider in registry.enabled_names().into_iter().filter_map(|name| registry.get(name)) {
         println!("Testing {} CLI execution...", provider.name());
 
         let result = provider.execute(&["--version"]).await;

@@ -33,7 +33,7 @@ impl Provider for GitLabProvider {
         self.min_version.clone()
     }
 
-    fn check_auth(&self) -> BoxFuture<'_, bool> {
+    fn check_auth(&self) -> BoxFuture<'_, crate::error::Result<bool>> {
         Box::pin(super::cli_authenticated(self.cli()))
     }
 

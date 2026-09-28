@@ -12,6 +12,39 @@ const RUN_FIELDS: &str = "databaseId,status,conclusion,headBranch,workflowName,d
 const CHECK_FIELDS: &str =
     "bucket,name,workflow,state,startedAt,completedAt,link,description,event";
 
+#[derive(Deserialize)]
+struct AuthReport {
+    hosts: std::collections::HashMap<String, Vec<AuthEntry>>,
+}
+
+#[derive(Deserialize)]
+struct AuthEntry {
+    state: String,
+    error: Option<String>,
+}
+
+impl AuthReport {
+    /// `Err` when nothing succeeded but a check failed on the network (gh
+    /// reports resets as `error`, not `timeout`): login unknown.
+    fn logged_in(self) -> Result<bool> {
+        let entries: Vec<AuthEntry> = self.hosts.into_values().flatten().collect();
+        if entries.iter().any(|e| e.state == "success") {
+            return Ok(true);
+        }
+        let unreachable = |e: &AuthEntry| {
+            e.state == "timeout" || e.error.as_deref().is_some_and(super::network_failure)
+        };
+        match entries.into_iter().find(unreachable) {
+            Some(e) => Err(CliError::execution_failed(
+                "gh",
+                1,
+                e.error.unwrap_or_else(|| "auth check timed out".to_string()),
+            )),
+            None => Ok(false),
+        }
+    }
+}
+
 pub struct GitHubProvider {
     min_version: Version,
 }
@@ -41,8 +74,17 @@ impl Provider for GitHubProvider {
         self.min_version.clone()
     }
 
-    fn check_auth(&self) -> BoxFuture<'_, bool> {
-        Box::pin(super::cli_authenticated(self.cli()))
+    fn check_auth(&self) -> BoxFuture<'_, crate::error::Result<bool>> {
+        Box::pin(async move {
+            // Plain `auth status` exits 1 both when logged out and when its API
+            // check times out; `--json` tells them apart. Older gh lacks it.
+            let args = ["auth", "status", "--active", "--json", "hosts"];
+            match executor::execute_success(self.cli(), &args, Duration::from_secs(10)).await {
+                Ok(output) => output.json::<AuthReport>(self.cli())?.logged_in(),
+                Err(CliError::ExecutionFailed { .. }) => super::cli_authenticated(self.cli()).await,
+                Err(e) => Err(e),
+            }
+        })
     }
 
     fn ci_runs(&self, limit: usize) -> BoxFuture<'_, Result<Vec<BuildRun>>> {

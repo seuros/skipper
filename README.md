@@ -68,6 +68,10 @@ Local git needs no binary: it runs in-process on
 [gitoxide](https://github.com/GitoxideLabs/gitoxide).
 
 A missing, outdated, or unauthenticated CLI just hides that provider's tools.
+An auth check that fails on the network (timeout, connection reset) is not
+treated as logged out: skipper retries it with backoff for a few minutes and
+announces the tools with `tools/list_changed` once it answers. Detection
+results are logged to stderr, which MCP clients keep in their server logs.
 
 ## Tool visibility
 

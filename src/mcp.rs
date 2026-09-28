@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 
 pub struct McpEnvironment {
     env: Arc<SkipperEnvironment>,
-    providers: Vec<&'static str>,
+    registry: Arc<Registry>,
 }
 
 impl Environment for McpEnvironment {
@@ -42,20 +42,19 @@ impl Environment for McpEnvironment {
 
     fn get_custom(&self, key: &str) -> Option<String> {
         if let Some(name) = key.strip_prefix("forge:") {
-            return (self.providers.contains(&name) && self.env.forges().contains(name))
+            return (self.registry.is_enabled(name) && self.env.forges().contains(name))
                 .then(|| "enabled".to_string());
         }
 
         key.strip_prefix("provider:")
-            .filter(|name| self.providers.contains(name))
+            .filter(|name| self.registry.is_enabled(name))
             .map(|_| "enabled".to_string())
     }
 }
 
 pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
-    let mut registry = Registry::with_defaults();
+    let registry = Arc::new(Registry::with_defaults());
     registry.detect_all().await;
-    let providers = registry.enabled_names();
 
     let config = Config::load();
     let mut hosts = ForgeHosts::with_defaults();
@@ -82,14 +81,14 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
         .with_resource_templates()
         .with_tasks(true, true)
         .with_logging()
-        .with_environment(McpEnvironment { env: env.clone(), providers })
+        .with_environment(McpEnvironment { env: env.clone(), registry: registry.clone() })
         .build();
 
     server.register_router(
         tools::router(),
         Arc::new(SkipperServer {
             #[cfg(any(feature = "github", feature = "gitlab"))]
-            registry,
+            registry: registry.clone(),
             #[cfg(feature = "tea")]
             cwd: cwd.clone(),
             env: env.clone(),
@@ -99,6 +98,24 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     server.register_router(git::router(), Arc::new(crate::git::GitServer));
 
     let sender = server.notification_sender();
+
+    // A probe that timed out at startup (slow `gh auth status`, flaky network)
+    // hides that forge's tools; retry and surface them once it answers.
+    if !registry.unreachable().is_empty() {
+        let sender = sender.clone();
+        tokio::spawn(async move {
+            registry
+                .retry_unreachable(|online| {
+                    tracing::info!(providers = ?online, "providers reachable; refreshing tools");
+                    if let Err(e) = sender
+                        .send(JsonRpcNotification::new("notifications/tools/list_changed", None))
+                    {
+                        tracing::warn!(error = %e, "dropped tools/list_changed notification");
+                    }
+                })
+                .await;
+        });
+    }
 
     if has_repo {
         manager.add(Arc::new(GitStatusWatcher::new(&cwd))).await;

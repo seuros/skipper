@@ -25,7 +25,7 @@ use crate::provider::Registry;
 
 pub struct SkipperServer {
     #[cfg(any(feature = "github", feature = "gitlab"))]
-    pub(crate) registry: Registry,
+    pub(crate) registry: Arc<Registry>,
     #[cfg(feature = "tea")]
     pub(crate) cwd: std::path::PathBuf,
     pub(crate) env: Arc<crate::environment::SkipperEnvironment>,

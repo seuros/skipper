@@ -133,3 +133,15 @@ fn test_no_checks_is_distinct_from_success() {
     let checks: Vec<PrCheck> = serde_json::from_str(json).unwrap();
     assert_eq!(CheckCounts::tally(&checks).conclusion(), "success");
 }
+
+#[test]
+fn test_auth_network_failure_is_unknown_not_logged_out() {
+    let host = |entry: &str| {
+        let json = format!(r#"{{"hosts":{{"github.com":[{entry}]}}}}"#);
+        serde_json::from_str::<AuthReport>(&json).unwrap().logged_in()
+    };
+    assert!(host(r#"{"state":"success"}"#).unwrap());
+    assert!(!host(r#"{"state":"error","error":"HTTP 401: Bad credentials"}"#).unwrap());
+    assert!(host(r#"{"state":"timeout","error":"i/o timeout"}"#).is_err());
+    assert!(host(r#"{"state":"error","error":"read: connection reset by peer"}"#).is_err());
+}

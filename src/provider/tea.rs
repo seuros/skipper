@@ -34,11 +34,11 @@ impl Provider for TeaProvider {
         self.min_version.clone()
     }
 
-    fn check_auth(&self) -> BoxFuture<'_, bool> {
+    fn check_auth(&self) -> BoxFuture<'_, crate::error::Result<bool>> {
         Box::pin(async move {
             let Some(creds) = super::forgejo::any_credentials() else {
                 tracing::debug!("no tea login with a token; forge tools stay hidden");
-                return false;
+                return Ok(false);
             };
 
             let client = super::forgejo::ForgejoClient::new(creds)
@@ -52,15 +52,18 @@ impl Provider for TeaProvider {
                         user = user.login,
                         "forgejo token validated"
                     );
-                    true
+                    Ok(true)
                 }
+                // Network failure or timeout, or the server erroring: unknown.
+                Err(e @ crate::error::CliError::Io { .. }) => Err(e),
+                Err(e @ crate::error::CliError::ExecutionFailed { code: 500.., .. }) => Err(e),
                 Err(e) => {
                     tracing::warn!(
                         login = client.login_name(),
                         error = %e,
                         "forgejo token rejected"
                     );
-                    false
+                    Ok(false)
                 }
             }
         })
