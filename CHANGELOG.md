@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/seuros/skipper/compare/skipper-v0.3.0...skipper-v0.4.0) (2026-09-29)
+
+
+### Features
+
+* PR discussion and PR list resources ([a316110](https://github.com/seuros/skipper/commit/a316110dd3f6622fe383b9329ac72633813a4ba5))
+
 ## [0.3.0](https://github.com/seuros/skipper/compare/skipper-v0.2.0...skipper-v0.3.0) (2026-09-29)
 
 
