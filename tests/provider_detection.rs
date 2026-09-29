@@ -1,3 +1,6 @@
+// Every test probes a forge CLI; a forge-less build has nothing to detect.
+#![cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
+
 use skipper::provider::{Provider, ProviderStatus, Registry};
 
 #[cfg(feature = "github")]

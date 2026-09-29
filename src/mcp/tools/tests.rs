@@ -18,14 +18,20 @@ fn test_router_registers_every_tool() {
         assert!(names.contains(&tool.to_string()), "missing tool {tool}");
     }
 
-    let resources: Vec<String> = router.resources.list().into_iter().map(|r| r.uri).collect();
     #[cfg(feature = "tea")]
-    assert!(resources.contains(&"skipper://repo".to_string()));
+    {
+        let resources: Vec<String> = router.resources.list().into_iter().map(|r| r.uri).collect();
+        assert!(resources.contains(&"skipper://repo".to_string()));
+    }
 
     #[cfg(feature = "github")]
     {
         let templates: Vec<String> =
             router.templates.list().into_iter().map(|t| t.uri_template).collect();
         assert!(templates.contains(&"skipper://pr/{number}/checks".to_string()));
+        assert!(templates.contains(&"skipper://pr/{number}/comments".to_string()));
+        assert!(templates.contains(&"skipper://pr/{number}/comments/{kind}".to_string()));
+        assert!(templates.contains(&"skipper://watch/comments/{kind}".to_string()));
+        assert!(templates.contains(&"skipper://prs/{state}/{author}".to_string()));
     }
 }

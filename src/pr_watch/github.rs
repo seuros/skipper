@@ -7,11 +7,8 @@ use serde::Deserialize;
 
 use super::{ApiBudget, ChecksSummary, Event, FailedCheck, PrSnapshot, RateHint};
 use crate::error::{CliError, Result};
-use crate::provider::github::{ApiResponse, CheckCounts, GitHubProvider};
+use crate::provider::github::{ApiResponse, CheckCounts, GitHubProvider, PAGE, User, clip, login};
 
-/// Comment and review bodies are cut past this; the url has the rest.
-const BODY_LIMIT: usize = 1500;
-const PAGE: usize = 100;
 /// Pages of new comments read per poll before waiting for the next one.
 const MAX_PAGES: usize = 5;
 
@@ -47,11 +44,6 @@ struct RestPr {
 #[derive(Debug, Clone, Deserialize)]
 struct Head {
     sha: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct User {
-    login: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,7 +247,7 @@ impl GithubPr {
                         c.id,
                         Event::Comment {
                             author: login(c.user),
-                            body: clip(c.body),
+                            body: clip(c.body.unwrap_or_default()),
                             url: c.html_url,
                             at: c.created_at,
                             path: c.path,
@@ -292,7 +284,7 @@ impl GithubPr {
                         Event::Review {
                             author: login(r.user),
                             state: r.state,
-                            body: clip(r.body),
+                            body: clip(r.body.unwrap_or_default()),
                             url: r.html_url,
                             at: r.submitted_at,
                         },
@@ -440,18 +432,6 @@ pub(super) fn summarize(sha: &str, runs: &[CheckRun], statuses: &[CommitStatus])
         conclusion: counts.conclusion().to_string(),
         counts,
         failed,
-    }
-}
-
-fn login(user: Option<User>) -> String {
-    user.map_or_else(|| "ghost".to_string(), |u| u.login)
-}
-
-fn clip(body: Option<String>) -> String {
-    let body = body.unwrap_or_default();
-    match body.char_indices().nth(BODY_LIMIT) {
-        Some((cut, _)) => format!("{}…", &body[..cut]),
-        None => body,
     }
 }
 

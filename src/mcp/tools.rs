@@ -191,15 +191,37 @@ pub fn router() -> McpRouter<SkipperServer> {
 
     #[cfg(feature = "github")]
     {
-        templates = templates.with_template(
-            SkipperServer::pr_checks_template_info(),
-            SkipperServer::pr_checks_handler,
-            None,
-        );
+        templates = templates
+            .with_template(
+                SkipperServer::pr_checks_template_info(),
+                SkipperServer::pr_checks_handler,
+                None,
+            )
+            .with_template(
+                SkipperServer::pr_comments_template_info(),
+                SkipperServer::pr_comments_handler,
+                None,
+            )
+            .with_template(
+                SkipperServer::pr_comments_kind_template_info(),
+                SkipperServer::pr_comments_kind_handler,
+                None,
+            )
+            .with_template(
+                SkipperServer::watch_comments_template_info(),
+                SkipperServer::watch_comments_handler,
+                Some(SkipperServer::watch_comments_visibility),
+            )
+            .with_template(
+                SkipperServer::pr_list_template_info(),
+                SkipperServer::pr_list_handler,
+                None,
+            );
     }
 
     McpRouter::new(tools, McpPromptRouter::new(), resources, templates)
 }
 
-#[cfg(test)]
+// Every assertion is per forge; a forge-less build has nothing to check.
+#[cfg(all(test, any(feature = "github", feature = "gitlab", feature = "tea")))]
 mod tests;

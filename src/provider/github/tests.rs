@@ -159,3 +159,40 @@ fn test_api_response_parse() {
     assert_eq!((ok.status, ok.retry_after, ok.body.as_str()), (200, Some(30), "{\"n\":1}"));
     assert!(ApiResponse::parse("gh: connection reset").is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn test_retrying_retries_network_failures_only() {
+    let calls = std::cell::Cell::new(0u32);
+    let value = retrying(|| {
+        calls.set(calls.get() + 1);
+        let n = calls.get();
+        async move {
+            if n < 3 {
+                Err(CliError::execution_failed("gh", 1, "read: connection reset by peer"))
+            } else {
+                Ok(n)
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(value, 3);
+
+    let calls = std::cell::Cell::new(0u32);
+    let failed: Result<u32> = retrying(|| {
+        calls.set(calls.get() + 1);
+        async { Err(CliError::execution_failed("gh", 1, "HTTP 404: Not Found")) }
+    })
+    .await;
+    assert!(failed.is_err());
+    assert_eq!(calls.get(), 1);
+
+    let calls = std::cell::Cell::new(0u32);
+    let exhausted: Result<u32> = retrying(|| {
+        calls.set(calls.get() + 1);
+        async { Err(CliError::execution_failed("gh", 1, "read: connection reset by peer")) }
+    })
+    .await;
+    assert!(exhausted.unwrap_err().to_string().contains("connection reset"));
+    assert_eq!(calls.get(), 4);
+}

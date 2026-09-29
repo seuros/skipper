@@ -2,10 +2,15 @@ use crate::error::{CliError, Result};
 use crate::executor::{self};
 use crate::provider::{BoxFuture, BuildRun, Provider, ProviderExt};
 use crate::version::minimum;
+use chrono_machines::{AsyncRetryable, ExponentialBackoff, RetryOutcome};
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+mod discussion;
+pub use discussion::{PrDiscussion, PrNote};
+pub(crate) use discussion::{User, clip, login};
 
 const RUN_FIELDS: &str = "databaseId,status,conclusion,headBranch,workflowName,displayTitle,url";
 
@@ -179,6 +184,60 @@ impl GitHubProvider {
             tokio::time::sleep(interval.min(deadline - now)).await;
         }
     }
+    /// The PR of the current branch.
+    pub async fn current_pr(&self) -> Result<u64> {
+        #[derive(Deserialize)]
+        struct View {
+            number: u64,
+        }
+        let view: View = self.execute_json(&["pr", "view", "--json", "number"]).await?;
+        Ok(view.number)
+    }
+
+    pub async fn pr_list(&self, state: &str, author: &str) -> Result<Vec<PrState>> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Listed {
+            number: u64,
+            state: String,
+            merged_at: Option<String>,
+        }
+        let author = if author == "me" { "@me" } else { author };
+        let args = [
+            "pr",
+            "list",
+            "--state",
+            state,
+            "--author",
+            author,
+            "--limit",
+            "30",
+            "--json",
+            "number,state,mergedAt",
+        ];
+        let listed: Vec<Listed> = retrying(|| self.execute_json(&args)).await?;
+        Ok(listed
+            .into_iter()
+            .map(|l| PrState {
+                pr: l.number,
+                state: l.state.to_lowercase(),
+                merged_at: l.merged_at,
+            })
+            .collect())
+    }
+
+    async fn api_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let response = retrying(|| self.api_get("github.com", path, None)).await?;
+        if response.status != 200 {
+            return Err(CliError::execution_failed(
+                self.cli(),
+                i32::from(response.status),
+                response.body.trim(),
+            ));
+        }
+        response.json()
+    }
+
     async fn checks_output(&self, args: &[&str], timeout: Duration) -> Result<Vec<PrCheck>> {
         let output = executor::execute(self.cli(), args, timeout).await?;
 
@@ -191,6 +250,38 @@ impl GitHubProvider {
 
         output.json(self.cli())
     }
+}
+
+/// REST page size: GitHub's maximum `per_page`.
+pub(crate) const PAGE: usize = 100;
+
+/// `call`, retried up to three times (~1s doubling, jittered) while it fails
+/// on the network. Any other error returns at once.
+async fn retrying<T, F, Fut>(call: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let backoff = ExponentialBackoff::new()
+        .base_delay_ms(1_000)
+        .multiplier(2.0)
+        .max_delay_ms(4_000)
+        .max_attempts(4)
+        .jitter_factor(0.5);
+    call.retry_async(backoff)
+        .when(|e: &CliError| super::network_failure(&e.to_string()))
+        .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
+        .await
+        .map(RetryOutcome::into_inner)
+        .map_err(|e| e.into_cause().expect("a failed retry carries its last error"))
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PrState {
+    pub pr: u64,
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merged_at: Option<String>,
 }
 
 /// A `gh api -i` response. 304 means the ETag still matches: nothing changed,

@@ -501,11 +501,6 @@ impl PrWatcher {
 
     /// The PR for the current branch, asked of gh once per branch.
     async fn branch_pr(&self) -> Result<u64> {
-        #[derive(Deserialize)]
-        struct View {
-            number: u64,
-        }
-
         let branch = crate::git::repo_info(self.env.cwd())
             .ok()
             .and_then(|info| info.branch)
@@ -514,9 +509,9 @@ impl PrWatcher {
             return Ok(*number);
         }
 
-        let view: View = self.gh.execute_json(&["pr", "view", "--json", "number"]).await?;
-        self.branch_prs.lock().expect("branch cache lock").insert(branch, view.number);
-        Ok(view.number)
+        let number = self.gh.current_pr().await?;
+        self.branch_prs.lock().expect("branch cache lock").insert(branch, number);
+        Ok(number)
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
