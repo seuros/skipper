@@ -49,7 +49,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.98.1"
+          toolchain: "1.99.0"
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
