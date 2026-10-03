@@ -34,8 +34,18 @@ impl Notification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WatcherState {
-    GitDirty { staged: u32, modified: u32, untracked: u32 },
-    Forges { has_repo: bool, forges: Vec<String> },
+    GitDirty {
+        staged: u32,
+        modified: u32,
+        untracked: u32,
+    },
+    Forges {
+        has_repo: bool,
+        forges: Vec<String>,
+        /// The remote forge reads go to, as `name (forge)`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current: Option<String>,
+    },
     Custom(Value),
 }
 
@@ -306,33 +316,46 @@ impl Watcher for RemoteWatcher {
             use crate::environment::Environment as _;
 
             self.env.refresh().await;
+            let current =
+                crate::git::current_remote(self.env.cwd()).ok().flatten().map(|remote| match self
+                    .env
+                    .forge_for_url(&remote.url)
+                {
+                    Some(forge) => format!("{} ({forge})", remote.name),
+                    None => remote.name,
+                });
             Ok(WatcherState::Forges {
                 has_repo: self.env.has_git_repo(),
                 forges: self.env.forges().into_iter().map(str::to_string).collect(),
+                current,
             })
         })
     }
 
     fn on_change(&self, old: &WatcherState, new: &WatcherState) -> Option<Notification> {
         let (
-            WatcherState::Forges { has_repo: was_repo, forges: old_forges },
-            WatcherState::Forges { has_repo, forges },
+            WatcherState::Forges { has_repo: was_repo, forges: old_forges, current: old_current },
+            WatcherState::Forges { has_repo, forges, current },
         ) = (old, new)
         else {
             return None;
         };
 
-        if was_repo == has_repo && old_forges == forges {
+        if was_repo == has_repo && old_forges == forges && old_current == current {
             return None;
         }
 
-        let message = if !has_repo {
+        let mut message = if !has_repo {
             "Workspace is no longer a git repository; forge tools hidden".to_string()
         } else if forges.is_empty() {
             "No remote maps to a known forge; forge tools hidden".to_string()
         } else {
             format!("Forges available: {}", forges.join(", "))
         };
+        if *has_repo && old_current != current {
+            message
+                .push_str(&format!("; current remote: {}", current.as_deref().unwrap_or("none")));
+        }
 
         Some(Notification::of_state(&self.name, message, new))
     }

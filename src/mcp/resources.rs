@@ -40,15 +40,17 @@ impl SkipperServer {
     #[mcp_resource(
         uri = "skipper://repo",
         name = "repo",
-        description = "Gitea/Forgejo repo of this workspace's remote",
+        description = "Gitea/Forgejo repo of this workspace's remote, current remote first",
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:tea\").is_some()).unwrap_or(false)"
     )]
     pub(crate) async fn repo(&self, _ctx: Ctx<'_>) -> ResourceResult {
         use crate::provider::forgejo::{ForgejoClient, credentials_for_host};
 
+        let current = crate::git::current_remote(&self.cwd).ok().flatten().map(|c| c.name);
         let remotes = crate::remote::ordered_remotes(
             crate::git::remotes(&self.cwd).map_err(|e| ResourceError::Read(e.to_string()))?.remotes,
+            current.as_deref(),
         );
 
         let resolved = remotes.iter().find_map(|(remote, url)| {
@@ -59,7 +61,7 @@ impl SkipperServer {
         });
 
         let Some((remote, creds, owner, name)) = resolved else {
-            return Err(ResourceError::NotFound(
+            return Err(refused(
                 "no remote of this workspace maps to a Gitea/Forgejo login".to_string(),
             ));
         };
@@ -210,6 +212,128 @@ impl SkipperServer {
             .map_err(|e| ResourceError::Read(e.to_string()))?;
         json_resource(format!("skipper://prs/{state}/{author}"), &prs)
     }
+
+    #[cfg(any(feature = "github", feature = "tea"))]
+    #[mcp_resource_template(
+        uri_template = "skipper://issues/{state}",
+        name = "issues",
+        title = "Recent issues",
+        description = "Last 30 issues of the current remote's repo (GitHub or Gitea/Forgejo; see skipper://workspace), latest update first, in state open | closed | all: number, title, author, labels, comments",
+        mime_type = "application/json",
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
+    )]
+    pub(crate) async fn issues(&self, ctx: Ctx<'_>) -> ResourceResult {
+        let state = uri_choice(&ctx, "state", "open", &["open", "closed", "all"])?;
+        let target = issue_repo(&self.env)?;
+        let issues = match target.forge {
+            #[cfg(feature = "github")]
+            "github" => {
+                crate::provider::github::GitHubProvider::new()
+                    .issues(&target.host, &target.owner, &target.name, &state)
+                    .await
+            }
+            #[cfg(feature = "tea")]
+            "tea" => forgejo_client(&target)?.issues(&target.owner, &target.name, &state).await,
+            _ => return Err(no_issue_forge(&target)),
+        }
+        .map_err(|e| ResourceError::Read(e.to_string()))?;
+
+        json_resource(
+            format!("skipper://issues/{state}"),
+            &FromRemote::new(&target, serde_json::json!({ "issues": issues })),
+        )
+    }
+
+    #[cfg(any(feature = "github", feature = "tea"))]
+    #[mcp_resource_template(
+        uri_template = "skipper://issue/{number}",
+        name = "issue",
+        title = "Issue and discussion",
+        description = "Issue of the current remote's repo (GitHub or Gitea/Forgejo): title, state, author, labels, assignees, body, every comment; HTML comments and collapsed <details> dropped",
+        mime_type = "application/json",
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
+    )]
+    pub(crate) async fn issue(&self, ctx: Ctx<'_>) -> ResourceResult {
+        let raw = ctx.get_uri_param("number").unwrap_or_default();
+        let number = raw.parse::<u64>().map_err(|_| {
+            ResourceError::InvalidUri(format!("issue number must be an integer: {raw}"))
+        })?;
+        let target = issue_repo(&self.env)?;
+        let thread = match target.forge {
+            #[cfg(feature = "github")]
+            "github" => {
+                crate::provider::github::GitHubProvider::new()
+                    .issue(&target.host, &target.owner, &target.name, number)
+                    .await
+            }
+            #[cfg(feature = "tea")]
+            "tea" => forgejo_client(&target)?.issue(&target.owner, &target.name, number).await,
+            _ => return Err(no_issue_forge(&target)),
+        }
+        .map_err(|e| ResourceError::Read(e.to_string()))?;
+
+        let Some(thread) = thread else {
+            let hint = if target.forge == "github" {
+                format!("; read skipper://pr/{number}/comments")
+            } else {
+                String::new()
+            };
+            return Err(refused(format!("#{number} is a pull request{hint}")));
+        };
+        json_resource(format!("skipper://issue/{number}"), &FromRemote::new(&target, thread))
+    }
+}
+
+/// Forge data tagged with where it came from, so a switched remote shows.
+#[cfg(any(feature = "github", feature = "tea"))]
+#[derive(serde::Serialize)]
+struct FromRemote<'a, T> {
+    remote: &'a str,
+    forge: &'static str,
+    repo: String,
+    #[serde(flatten)]
+    data: T,
+}
+
+#[cfg(any(feature = "github", feature = "tea"))]
+impl<'a, T> FromRemote<'a, T> {
+    fn new(target: &'a crate::workspace::ForgeRepo, data: T) -> Self {
+        Self { remote: &target.remote, forge: target.forge, repo: target.full_name(), data }
+    }
+}
+
+/// The current remote's forge repo, resolved afresh for each read.
+#[cfg(any(feature = "github", feature = "tea"))]
+fn issue_repo(
+    env: &crate::environment::SkipperEnvironment,
+) -> std::result::Result<crate::workspace::ForgeRepo, ResourceError> {
+    use crate::workspace::RemoteError;
+
+    crate::workspace::forge_repo(env).map_err(|e| match e {
+        RemoteError::Git(e) => ResourceError::Read(e.to_string()),
+        e => refused(e.to_string()),
+    })
+}
+
+#[cfg(any(feature = "github", feature = "tea"))]
+fn no_issue_forge(target: &crate::workspace::ForgeRepo) -> ResourceError {
+    refused(format!(
+        "current remote {} is on {}; issues are read from GitHub or Gitea/Forgejo",
+        target.remote, target.forge
+    ))
+}
+
+#[cfg(feature = "tea")]
+fn forgejo_client(
+    target: &crate::workspace::ForgeRepo,
+) -> std::result::Result<crate::provider::forgejo::ForgejoClient, ResourceError> {
+    let creds = crate::provider::forgejo::credentials_for_host(&target.host).ok_or_else(|| {
+        refused(format!(
+            "no tea login for {} (remote {}); add one with `tea login add`",
+            target.host, target.remote
+        ))
+    })?;
+    Ok(crate::provider::forgejo::ForgejoClient::new(creds))
 }
 
 #[cfg(feature = "github")]
@@ -233,7 +357,7 @@ fn note_kind(ctx: &Ctx<'_>) -> std::result::Result<String, ResourceError> {
 }
 
 /// URI param `name`, `default` when absent; must be one of `allowed`.
-#[cfg(feature = "github")]
+#[cfg(any(feature = "github", feature = "tea"))]
 fn uri_choice(
     ctx: &Ctx<'_>,
     name: &str,
@@ -245,6 +369,14 @@ fn uri_choice(
         return Ok(value);
     }
     Err(ResourceError::InvalidUri(format!("{name} must be {}: {value}", allowed.join(" | "))))
+}
+
+/// A read this workspace cannot serve, with its reason. mcp-host answers
+/// `NotFound` with the URI alone and retries `Read` as if transient;
+/// `InvalidUri` (-32602) keeps the message and fails at once.
+#[cfg(any(feature = "github", feature = "tea"))]
+fn refused(message: impl Into<String>) -> ResourceError {
+    ResourceError::InvalidUri(message.into())
 }
 
 fn json_resource(uri: impl Into<String>, value: &impl serde::Serialize) -> ResourceResult {

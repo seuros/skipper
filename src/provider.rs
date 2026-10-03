@@ -7,6 +7,12 @@ pub mod tea;
 #[cfg(feature = "gitlab")]
 pub mod gitlab;
 
+#[cfg(any(feature = "github", feature = "tea"))]
+pub mod issues;
+
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) mod text;
+
 use crate::error::{CliError, Result};
 use crate::executor;
 use crate::version;

@@ -41,7 +41,9 @@ pub use file::FileAtRev;
 pub use file::show_file;
 pub use log::LogEntry;
 pub use log::log;
+pub use remotes::CurrentRemote;
 pub use remotes::RemoteInfo;
+pub use remotes::RemoteSource;
 pub use repo::RepoInfo;
 pub use show::CommitTrailer;
 pub use show::ShowEntry;
@@ -74,6 +76,12 @@ pub fn branches(cwd: &Path) -> Result<BranchInfo, GitError> {
 
 pub fn remotes(cwd: &Path) -> Result<RemoteInfo, GitError> {
     remotes::collect(cwd)
+}
+
+/// The remote forge reads go to: the branch's upstream, else the only remote,
+/// else `origin`. `None` when several remotes leave it open.
+pub fn current_remote(cwd: &Path) -> Result<Option<CurrentRemote>, GitError> {
+    remotes::current(cwd)
 }
 
 pub struct GitServer;

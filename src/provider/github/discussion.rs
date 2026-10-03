@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitHubProvider, PAGE};
 use crate::error::Result;
-
-/// Comment and review bodies are cut past this many chars.
-pub(crate) const BODY_LIMIT: usize = 1500;
+use crate::provider::text::{NOTE_LIMIT, readable};
 
 impl GitHubProvider {
     pub async fn pr_discussion(&self, pr: Option<u64>) -> Result<PrDiscussion> {
@@ -114,65 +112,7 @@ impl RestNote {
             line: self.line.or(self.original_line),
             state: self.state,
             at: self.created_at.or(self.submitted_at),
-            body: readable_body(self.body.as_deref().unwrap_or_default()),
+            body: readable(self.body.as_deref().unwrap_or_default(), NOTE_LIMIT),
         }
     }
 }
-
-fn readable_body(body: &str) -> String {
-    let mut kept = String::with_capacity(body.len());
-    let mut depth = 0usize;
-    let mut rest = body;
-    while let Some(ch) = rest.chars().next() {
-        if rest.starts_with("<!--") {
-            rest = rest.find("-->").map_or("", |end| &rest[end + 3..]);
-        } else if rest.starts_with("<details") {
-            depth += 1;
-            rest = &rest["<details".len()..];
-        } else if rest.starts_with("</details>") {
-            depth = depth.saturating_sub(1);
-            rest = &rest["</details>".len()..];
-        } else if let Some(len) = html_tag_len(rest) {
-            rest = &rest[len..];
-        } else {
-            if depth == 0 {
-                kept.push(ch);
-            }
-            rest = &rest[ch.len_utf8()..];
-        }
-    }
-
-    let mut lines: Vec<&str> = Vec::new();
-    for line in kept.lines().map(str::trim_end).filter(|l| !l.trim_start().starts_with("> [!")) {
-        if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
-            continue;
-        }
-        lines.push(line);
-    }
-    clip(lines.join("\n").trim().to_string())
-}
-
-pub(crate) fn clip(text: String) -> String {
-    match text.char_indices().nth(BODY_LIMIT) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
-    }
-}
-
-fn html_tag_len(rest: &str) -> Option<usize> {
-    const TAGS: [&str; 16] = [
-        "a", "img", "sub", "sup", "br", "p", "div", "span", "b", "i", "strong", "em", "summary",
-        "picture", "source", "hr",
-    ];
-    let inner = rest.strip_prefix('<')?;
-    let name = inner.strip_prefix('/').unwrap_or(inner);
-    let end = name.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(name.len());
-    if !TAGS.contains(&name[..end].to_ascii_lowercase().as_str()) {
-        return None;
-    }
-    let close = rest.find('>').filter(|&i| !rest[..i].contains('\n'))?;
-    Some(close + 1)
-}
-
-#[cfg(test)]
-mod tests;

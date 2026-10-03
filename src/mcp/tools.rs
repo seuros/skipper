@@ -219,6 +219,21 @@ pub fn router() -> McpRouter<SkipperServer> {
             );
     }
 
+    #[cfg(any(feature = "github", feature = "tea"))]
+    {
+        templates = templates
+            .with_template(
+                SkipperServer::issues_template_info(),
+                SkipperServer::issues_handler,
+                Some(SkipperServer::issues_visibility),
+            )
+            .with_template(
+                SkipperServer::issue_template_info(),
+                SkipperServer::issue_handler,
+                Some(SkipperServer::issue_visibility),
+            );
+    }
+
     McpRouter::new(tools, McpPromptRouter::new(), resources, templates)
 }
 

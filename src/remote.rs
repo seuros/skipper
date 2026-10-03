@@ -153,10 +153,12 @@ impl Default for ForgeHosts {
 #[cfg(test)]
 mod tests;
 
+/// `current` first, then `origin`, the rest by name.
 pub fn ordered_remotes(
     remotes: std::collections::BTreeMap<String, String>,
+    current: Option<&str>,
 ) -> Vec<(String, String)> {
     let mut ordered: Vec<(String, String)> = remotes.into_iter().collect();
-    ordered.sort_by_key(|(name, _)| name != "origin");
+    ordered.sort_by_key(|(name, _)| (Some(name.as_str()) != current, name != "origin"));
     ordered
 }

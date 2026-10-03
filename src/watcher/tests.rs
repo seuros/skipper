@@ -54,3 +54,21 @@ async fn test_manager_remove_stops_watcher() {
 
     assert!(!manager.remove("build_test_1").await);
 }
+
+#[tokio::test]
+async fn test_remote_watcher_reports_current_remote_switch() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let env = Arc::new(crate::environment::SkipperEnvironment::new(temp.path()).await);
+    let watcher = RemoteWatcher::new(env);
+    let state = |current: &str| WatcherState::Forges {
+        has_repo: true,
+        forges: vec!["github".to_string(), "tea".to_string()],
+        current: Some(current.to_string()),
+    };
+
+    let note = watcher
+        .on_change(&state("origin (tea)"), &state("github (github)"))
+        .expect("a switched current remote is reported");
+    assert_eq!(note.message, "Forges available: github, tea; current remote: github (github)");
+    assert!(watcher.on_change(&state("github (github)"), &state("github (github)")).is_none());
+}

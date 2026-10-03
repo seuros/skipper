@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 mod discussion;
+mod issues;
 pub use discussion::{PrDiscussion, PrNote};
-pub(crate) use discussion::{User, clip, login};
+pub(crate) use discussion::{User, login};
 
 const RUN_FIELDS: &str = "databaseId,status,conclusion,headBranch,workflowName,displayTitle,url";
 
@@ -199,7 +200,15 @@ impl GitHubProvider {
     }
 
     async fn api_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
-        let response = retrying(|| self.api_get("github.com", path, None)).await?;
+        self.api_json_at("github.com", path).await
+    }
+
+    async fn api_json_at<T: serde::de::DeserializeOwned>(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> Result<T> {
+        let response = retrying(|| self.api_get(host, path, None)).await?;
         if response.status != 200 {
             return Err(CliError::execution_failed(
                 self.cli(),

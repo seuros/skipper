@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
+mod issues;
+
 const API: &str = "forgejo";
 
 #[derive(Debug, Clone)]
@@ -141,11 +143,13 @@ impl ForgejoClient {
 
         let status = response.status();
         if !status.is_success() {
-            return Err(CliError::execution_failed(
-                API,
-                status.as_u16() as i32,
-                format!("{} {}", status, url),
-            ));
+            // The body says why (a missing token scope, an unknown repo).
+            let reason = response.try_into_json::<ApiMessage>().await.map(|m| m.message);
+            let mut detail = format!("{status} {url} (tea login {})", self.creds.name);
+            if let Some(reason) = reason.ok().filter(|r| !r.is_empty()) {
+                detail.push_str(&format!(": {reason}"));
+            }
+            return Err(CliError::execution_failed(API, i32::from(status.as_u16()), detail));
         }
 
         response
@@ -175,6 +179,12 @@ impl ForgejoClient {
         }
         self.get_json(&path).await
     }
+}
+
+#[derive(Deserialize)]
+struct ApiMessage {
+    #[serde(default)]
+    message: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -5,13 +5,14 @@ use serde::Serialize;
 
 use crate::git::error::GitError;
 use crate::git::open_repo;
+use crate::git::remotes::CurrentRemote;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RepoInfo {
     pub root: PathBuf,
     pub head_sha: Option<String>,
     pub branch: Option<String>,
-    pub remote_url: Option<String>,
+    pub remote: Option<CurrentRemote>,
     pub has_changes: bool,
     pub default_branch: Option<String>,
 }
@@ -25,32 +26,24 @@ pub fn info(cwd: &Path) -> Result<RepoInfo, GitError> {
 
     let branch = repo.head_ref().ok().flatten().map(|r| r.name().shorten().to_string());
 
-    let remote_url = repo
-        .find_default_remote(gix::remote::Direction::Fetch)
-        .and_then(std::result::Result::ok)
-        .and_then(|remote| {
-            remote.url(gix::remote::Direction::Fetch).map(|u| u.to_bstring().to_string())
-        });
+    let remote = crate::git::remotes::current_in(&repo);
 
     let has_changes = repo.is_dirty().unwrap_or(false);
 
-    let default_branch = detect_default_branch(&repo);
+    let default_branch = detect_default_branch(&repo, remote.as_ref().map(|r| r.name.as_str()));
 
-    Ok(RepoInfo { root, head_sha, branch, remote_url, has_changes, default_branch })
+    Ok(RepoInfo { root, head_sha, branch, remote, has_changes, default_branch })
 }
 
-fn detect_default_branch(repo: &gix::Repository) -> Option<String> {
-    // Try remote HEAD symbolic ref first
-    if let Some(Ok(remote)) = repo.find_default_remote(gix::remote::Direction::Fetch) {
-        let remote_name = remote.name()?.as_bstr().to_string();
-        let head_ref_name = format!("refs/remotes/{remote_name}/HEAD");
-        if let Ok(reference) = repo.find_reference(&head_ref_name)
+/// The current remote's HEAD, else a local `main` or `master`.
+fn detect_default_branch(repo: &gix::Repository, remote: Option<&str>) -> Option<String> {
+    if let Some(remote_name) = remote {
+        let prefix = format!("refs/remotes/{remote_name}/");
+        if let Ok(reference) = repo.find_reference(&format!("{prefix}HEAD"))
             && let Some(target) = reference.target().try_name()
+            && let Some(branch) = target.as_bstr().to_string().strip_prefix(&prefix)
         {
-            let name = target.as_bstr().to_string();
-            if let Some(branch) = name.rsplit('/').next() {
-                return Some(branch.to_owned());
-            }
+            return Some(branch.to_owned());
         }
     }
 

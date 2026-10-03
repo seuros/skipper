@@ -7,7 +7,8 @@ use serde::Deserialize;
 
 use super::{ApiBudget, ChecksSummary, Event, FailedCheck, PrSnapshot, RateHint};
 use crate::error::{CliError, Result};
-use crate::provider::github::{ApiResponse, CheckCounts, GitHubProvider, PAGE, User, clip, login};
+use crate::provider::github::{ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login};
+use crate::provider::text::{NOTE_LIMIT, clip};
 
 /// Pages of new comments read per poll before waiting for the next one.
 const MAX_PAGES: usize = 5;
@@ -247,7 +248,7 @@ impl GithubPr {
                         c.id,
                         Event::Comment {
                             author: login(c.user),
-                            body: clip(c.body.unwrap_or_default()),
+                            body: clip(c.body.unwrap_or_default(), NOTE_LIMIT),
                             url: c.html_url,
                             at: c.created_at,
                             path: c.path,
@@ -284,7 +285,7 @@ impl GithubPr {
                         Event::Review {
                             author: login(r.user),
                             state: r.state,
-                            body: clip(r.body.unwrap_or_default()),
+                            body: clip(r.body.unwrap_or_default(), NOTE_LIMIT),
                             url: r.html_url,
                             at: r.submitted_at,
                         },

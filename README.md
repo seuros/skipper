@@ -167,14 +167,30 @@ scoped by the workspace's remotes rather than your account.
 
 | URI | Provider | Contents |
 |-----|----------|----------|
-| `skipper://workspace` | any | The current workspace: working directory, repo root, branch, HEAD, dirty state, remotes (credentials stripped) and the forge each maps to |
-| `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, resolved through `origin` when several match |
+| `skipper://workspace` | any | The current workspace: working directory, repo root, branch, HEAD, dirty state, remotes (credentials stripped) and the forge each maps to, the current remote marked |
+| `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, trying the current remote, then `origin`, when several match |
+| `skipper://issues/{state}` | GitHub, Gitea/Forgejo | The current remote's last 30 issues in `open`, `closed` or `all` state, latest update first: number, title, author, labels, comment count |
+| `skipper://issue/{number}` | GitHub, Gitea/Forgejo | One issue of the current remote: title, state, author, labels, assignees, body and every comment, cleaned like PR comments |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
 | `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged) and, compactly, every inline review comment, conversation comment and review, bodies without collapsed `<details>`, HTML comments or HTML tags |
 | `skipper://pr/{number}/comments/{kind}` | GitHub | The same, keeping only `inline`, `comment` or `review` notes (`all` keeps every one) |
 | `skipper://watch/comments/{kind}` | GitHub | `skipper://pr/{number}/comments/{kind}` for every PR under `pr_watch`, in one read; recently finished PRs report their final state, and a PR that cannot be read reports its `error` |
 | `skipper://prs/{state}/{author}` | GitHub | The last 30 PRs in `open`, `closed`, `merged` or `all` state by an author (`me` for the authenticated user): number, state, merge time |
 | `skipper://watch` | GitHub | PRs under `pr_watch`: status, checks, recent and undelivered events |
+
+### Current remote
+
+Issue resources read from one remote, picked fresh on every read:
+
+1. the remote the checked-out branch tracks (`branch.<name>.remote`);
+2. else the only remote;
+3. else `origin`.
+
+With several remotes and none of these, the read fails and says so rather
+than guess. Switching branches or running `git branch -u` moves the next read
+to the other forge; no restart. Every issue payload names the `remote`,
+`forge` and `repo` it came from. A Gitea/Forgejo token needs the `read:issue`
+scope.
 
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server
