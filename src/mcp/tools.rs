@@ -98,7 +98,7 @@ pub(super) fn cli_error(e: crate::error::CliError) -> ToolError {
 
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
-    let json = serde_json::to_string_pretty(value)
+    let json = serde_json::to_string(value)
         .map_err(|e| ToolError::Internal(format!("serialization failed: {e}")))?;
     Ok(ToolOutput::text(json))
 }
