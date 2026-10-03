@@ -194,7 +194,12 @@ scope.
 
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server
-instructions. Other clients get the plain instructions.
+instructions. Other clients get the plain instructions. Claude Code also
+replaces any failed resource read with its own text, so for `claude-code` the
+failure comes back as content naming the reason (`#5 is a pull request; read
+skipper://pr/5/comments`). Both quirks are client specs in
+`src/mcp/instructions.rs`; add a version constraint (`claude-code < 2.93`)
+once a release fixes one.
 
 ## Build monitoring
 

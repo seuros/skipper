@@ -76,6 +76,8 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     let server = Server::builder("skipper", env!("CARGO_PKG_VERSION"))
         .with_instructions(instructions::BASE)
         .with_instructions_provider(instructions::for_client)
+        .with_resource_errors_as_content(instructions::HIDES_RESOURCE_ERRORS)
+        .map_err(std::io::Error::other)?
         .with_tools(true)
         .with_resources(false, false)
         .with_resource_templates()
