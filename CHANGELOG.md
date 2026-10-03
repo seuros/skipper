@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/skipper/compare/skipper-v0.4.0...skipper-v0.5.0) (2026-10-03)
+
+
+### Features
+
+* issue resources, read from the current remote ([9870502](https://github.com/seuros/skipper/commit/987050245337181b76366a18245e6d0597a974e8))
+* resource read errors reach claude-code models ([e272e46](https://github.com/seuros/skipper/commit/e272e467f44f961ceab87ed07e26e0667686d566))
+
+
+### Bug Fixes
+
+* compact PR check output, ride out transient poll failures ([955a85c](https://github.com/seuros/skipper/commit/955a85c1ce43ca47ff214e2dee1ff42ba7471c4d))
+* exclude nested test dirs from crate package ([fdcc463](https://github.com/seuros/skipper/commit/fdcc463842ceb446380905bd9e4def22df460544))
+* **mcp:** emit compact JSON tool output ([cd424dc](https://github.com/seuros/skipper/commit/cd424dccba50cb4cf39001cc8d32d85b79c64803))
+
 ## [0.4.0](https://github.com/seuros/skipper/compare/skipper-v0.3.0...skipper-v0.4.0) (2026-09-29)
 
 
