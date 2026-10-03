@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/seuros/skipper/compare/skipper-v0.5.0...skipper-v0.5.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* full issue and PR bodies, issue triage fields, name issue resources ([ad18e36](https://github.com/seuros/skipper/commit/ad18e36024c7a2d3741177b70faf3bba8611cede))
+
 ## [0.5.0](https://github.com/seuros/skipper/compare/skipper-v0.4.0...skipper-v0.5.0) (2026-10-03)
 
 
