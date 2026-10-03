@@ -3,9 +3,9 @@ use super::*;
 #[test]
 fn test_graphql_issue_maps_deleted_author_and_missing_labels() {
     let raw = r#"{"data":{"repository":{"issues":{"nodes":[
-        {"number":7,"title":"Crash","state":"OPEN","updatedAt":"2026-10-01T10:00:00Z",
+        {"number":7,"title":"Crash","state":"OPEN","createdAt":"2026-09-30T10:00:00Z","updatedAt":"2026-10-01T10:00:00Z",
          "author":null,"labels":null,"comments":{"totalCount":0}},
-        {"number":3,"title":"Docs","state":"CLOSED","updatedAt":"2026-09-01T10:00:00Z",
+        {"number":3,"title":"Docs","state":"CLOSED","createdAt":"2026-08-30T10:00:00Z","updatedAt":"2026-09-01T10:00:00Z",
          "author":{"login":"seuros"},"labels":{"nodes":[{"name":"docs"}]},"comments":{"totalCount":2}}
     ]}}}}"#;
     let response: Graphql = serde_json::from_str(raw).expect("parse");

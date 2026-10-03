@@ -3,7 +3,8 @@ use std::sync::LazyLock;
 use mcp_host::prelude::*;
 
 pub const BASE: &str = "Git and forge ops for this workspace: local git, repo metadata, CI runs, PR checks. \
-     Prefer over git/gh/glab/tea CLIs.";
+     Issues, PR discussion (current remote): skipper://issues/{state}, skipper://issue/{number}, \
+     skipper://pr/{number}/comments. Prefer over git/gh/glab/tea CLIs.";
 
 /// Instructions for the initializing client; `None` keeps [`BASE`].
 pub fn for_client(ctx: &InstructionsContext<'_>) -> Option<String> {

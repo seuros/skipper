@@ -1,14 +1,14 @@
 //! Forge comment bodies cut down to their readable text.
 
-/// Comment and review bodies are cut past this many chars.
-pub(crate) const NOTE_LIMIT: usize = 1500;
-
-/// An issue's own body is often its spec; it gets more room than a comment.
-pub(crate) const ISSUE_BODY_LIMIT: usize = 6000;
+/// `pr_watch` event bodies are cut past this many chars; the event's `url` and
+/// `skipper://pr/{number}/comments` carry the whole text.
+#[cfg(feature = "github")]
+pub(crate) const EVENT_BODY_LIMIT: usize = 1500;
 
 /// `body` without HTML comments, collapsed `<details>`, inline markup tags or
-/// alert banners, blank runs squeezed, cut past `limit` chars.
-pub(crate) fn readable(body: &str, limit: usize) -> String {
+/// alert banners, blank runs squeezed. Never cut: what remains is the text a
+/// reader acts on.
+pub(crate) fn readable(body: &str) -> String {
     let mut kept = String::with_capacity(body.len());
     let mut depth = 0usize;
     let mut rest = body;
@@ -38,9 +38,11 @@ pub(crate) fn readable(body: &str, limit: usize) -> String {
         }
         lines.push(line);
     }
-    clip(lines.join("\n").trim().to_string(), limit)
+    lines.join("\n").trim().to_string()
 }
 
+/// `text` cut past `limit` chars, marked with `…`.
+#[cfg(feature = "github")]
 pub(crate) fn clip(text: String, limit: usize) -> String {
     match text.char_indices().nth(limit) {
         Some((cut, _)) => format!("{}…", &text[..cut]),

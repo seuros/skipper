@@ -5,7 +5,7 @@ use serde::Deserialize;
 use super::ForgejoClient;
 use crate::error::Result;
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
-use crate::provider::text::{ISSUE_BODY_LIMIT, NOTE_LIMIT, readable};
+use crate::provider::text::readable;
 
 impl ForgejoClient {
     /// The most recently updated issues of `owner/name` in `state`:
@@ -53,6 +53,8 @@ struct Issue {
     body: String,
     #[serde(default)]
     comments: u64,
+    #[serde(default)]
+    created_at: String,
     #[serde(default)]
     updated_at: String,
     /// Set only when the number is a pull request.
@@ -103,6 +105,7 @@ impl Issue {
             title: self.title,
             state: self.state,
             comments: self.comments,
+            created_at: self.created_at,
             updated_at: self.updated_at,
         }
     }
@@ -113,9 +116,10 @@ impl Issue {
             labels: self.labels(),
             assignees: self.assignees.unwrap_or_default().into_iter().map(|u| u.login).collect(),
             author: author(self.user, self.original_author),
+            created_at: self.created_at,
             title: self.title,
             state: self.state,
-            body: readable(&self.body, ISSUE_BODY_LIMIT),
+            body: readable(&self.body),
             notes,
         }
     }
@@ -127,7 +131,7 @@ impl Comment {
             id: self.id,
             author: author(self.user, self.original_author),
             at: self.created_at,
-            body: readable(&self.body, NOTE_LIMIT),
+            body: readable(&self.body),
         }
     }
 }

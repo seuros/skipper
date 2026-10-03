@@ -130,7 +130,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/comments",
         name = "pr_comments",
         title = "PR state and discussion",
-        description = "GitHub PR state (open/closed/merged) and every inline review comment, conversation comment and review: id, author, path, line, body without collapsed <details> or HTML comments. number=current for this branch's PR",
+        description = "GitHub PR state open|closed|merged + notes inline|comment|review: id, kind, author, path, line, body. number=current: this branch's PR",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -218,7 +218,7 @@ impl SkipperServer {
         uri_template = "skipper://issues/{state}",
         name = "issues",
         title = "Recent issues",
-        description = "Last 30 issues of the current remote's repo (GitHub or Gitea/Forgejo; see skipper://workspace), latest update first, in state open | closed | all: number, title, author, labels, comments",
+        description = "Current remote's issues (GitHub, Gitea/Forgejo), last 30 by update. state=open|closed|all: number, title, state, author, labels, comments, created_at, updated_at",
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
     )]
@@ -249,7 +249,7 @@ impl SkipperServer {
         uri_template = "skipper://issue/{number}",
         name = "issue",
         title = "Issue and discussion",
-        description = "Issue of the current remote's repo (GitHub or Gitea/Forgejo): title, state, author, labels, assignees, body, every comment; HTML comments and collapsed <details> dropped",
+        description = "Current remote's issue (GitHub, Gitea/Forgejo): title, state, author, created_at, labels, assignees, body, comments",
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
     )]

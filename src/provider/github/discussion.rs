@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitHubProvider, PAGE};
 use crate::error::Result;
-use crate::provider::text::{NOTE_LIMIT, readable};
+use crate::provider::text::readable;
 
 impl GitHubProvider {
     pub async fn pr_discussion(&self, pr: Option<u64>) -> Result<PrDiscussion> {
@@ -112,7 +112,7 @@ impl RestNote {
             line: self.line.or(self.original_line),
             state: self.state,
             at: self.created_at.or(self.submitted_at),
-            body: readable(self.body.as_deref().unwrap_or_default(), NOTE_LIMIT),
+            body: readable(self.body.as_deref().unwrap_or_default()),
         }
     }
 }

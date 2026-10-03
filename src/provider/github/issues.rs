@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::{GitHubProvider, PAGE, User, login, retrying};
 use crate::error::{CliError, Result};
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
-use crate::provider::text::{ISSUE_BODY_LIMIT, NOTE_LIMIT, readable};
+use crate::provider::text::readable;
 use crate::provider::{Provider, ProviderExt};
 
 impl GitHubProvider {
@@ -27,7 +27,7 @@ impl GitHubProvider {
         let query = format!(
             "query=query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ \
              issues(first: {LIST_LIMIT}, {states}orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
-             nodes {{ number title state updatedAt author {{ login }} \
+             nodes {{ number title state createdAt updatedAt author {{ login }} \
              labels(first: 20) {{ nodes {{ name }} }} comments {{ totalCount }} }} }} }} }}"
         );
         let owner_var = format!("owner={owner}");
@@ -80,9 +80,10 @@ impl GitHubProvider {
             title: issue.title,
             state: issue.state,
             author: login(issue.user),
+            created_at: issue.created_at,
             labels: issue.labels.into_iter().map(|l| l.name).collect(),
             assignees: issue.assignees.unwrap_or_default().into_iter().map(|u| u.login).collect(),
-            body: readable(issue.body.as_deref().unwrap_or_default(), ISSUE_BODY_LIMIT),
+            body: readable(issue.body.as_deref().unwrap_or_default()),
             notes,
         }))
     }
@@ -114,6 +115,7 @@ struct GqlIssue {
     number: u64,
     title: String,
     state: String,
+    created_at: String,
     updated_at: String,
     author: Option<User>,
     labels: Option<Nodes<Label>>,
@@ -143,6 +145,7 @@ impl GqlIssue {
                 .map(|l| l.nodes.into_iter().map(|l| l.name).collect())
                 .unwrap_or_default(),
             comments: self.comments.total_count,
+            created_at: self.created_at,
             updated_at: self.updated_at,
         }
     }
@@ -154,6 +157,7 @@ struct RestIssue {
     title: String,
     state: String,
     user: Option<User>,
+    created_at: String,
     #[serde(default)]
     labels: Vec<Label>,
     assignees: Option<Vec<User>>,
@@ -176,7 +180,7 @@ impl RestComment {
             id: self.id,
             author: login(self.user),
             at: self.created_at,
-            body: readable(self.body.as_deref().unwrap_or_default(), NOTE_LIMIT),
+            body: readable(self.body.as_deref().unwrap_or_default()),
         }
     }
 }
