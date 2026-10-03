@@ -9,7 +9,7 @@ license = "BSD-2-Clause"
 repository = "https://github.com/seuros/skipper"
 keywords = ["mcp", "git", "github", "gitlab", "forgejo"]
 categories = ["development-tools", "command-line-utilities"]
-exclude = ["/tests", "**/tests.rs"]
+exclude = ["/tests", "**/tests.rs", "**/tests/"]
 
 [workspace]
 
