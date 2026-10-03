@@ -77,11 +77,17 @@ pub fn is_terminal_status(status: &str) -> bool {
 #[cfg(any(feature = "github", feature = "gitlab"))]
 const NETWORK_FAILURES: &[&str] = &[
     "timeout",
+    "timed out",
     "connection reset",
     "connection refused",
     "dial tcp",
     "no such host",
+    "no route to host",
+    "network is unreachable",
     "tls handshake",
+    "unexpected eof",
+    "bad gateway",
+    "service unavailable",
 ];
 
 #[cfg(any(feature = "github", feature = "gitlab"))]

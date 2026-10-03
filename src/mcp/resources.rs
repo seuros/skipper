@@ -83,7 +83,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/checks",
         name = "pr_checks",
         title = "PR check matrix",
-        description = "GitHub PR checks by workflow: bucket, timing, links, conclusion. number=current for this branch's PR",
+        description = "GitHub PR checks by workflow: bucket, link, conclusion. number=current for this branch's PR",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_checks(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -98,23 +98,19 @@ impl SkipperServer {
 
         let counts = CheckCounts::tally(&checks);
         let mut workflows = serde_json::Map::new();
-        for check in &checks {
-            let key = if check.workflow.is_empty() { "(statuses)" } else { &check.workflow };
+        for mut check in checks {
+            let key = match std::mem::take(&mut check.workflow) {
+                workflow if workflow.is_empty() => "(statuses)".to_string(),
+                workflow => workflow,
+            };
+            let check =
+                serde_json::to_value(check).map_err(|e| ResourceError::Internal(e.to_string()))?;
             workflows
-                .entry(key.to_string())
+                .entry(key)
                 .or_insert_with(|| Value::Array(Vec::new()))
                 .as_array_mut()
                 .expect("workflow entries are arrays")
-                .push(serde_json::json!({
-                    "name": check.name,
-                    "bucket": check.bucket,
-                    "state": check.state,
-                    "started_at": check.started_at,
-                    "completed_at": check.completed_at,
-                    "link": check.link,
-                    "description": check.description,
-                    "event": check.event,
-                }));
+                .push(check);
         }
 
         let matrix = serde_json::json!({

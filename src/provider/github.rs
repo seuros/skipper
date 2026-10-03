@@ -14,8 +14,7 @@ pub(crate) use discussion::{User, clip, login};
 
 const RUN_FIELDS: &str = "databaseId,status,conclusion,headBranch,workflowName,displayTitle,url";
 
-const CHECK_FIELDS: &str =
-    "bucket,name,workflow,state,startedAt,completedAt,link,description,event";
+const CHECK_FIELDS: &str = "bucket,name,workflow,link,description";
 
 #[derive(Deserialize)]
 struct AuthReport {
@@ -154,35 +153,8 @@ impl GitHubProvider {
         fail_fast: bool,
         timeout: Duration,
         interval: Duration,
-    ) -> Result<Vec<PrCheck>> {
-        let start = tokio::time::Instant::now();
-        let deadline = start + timeout;
-        let registration_grace = Duration::from_secs(120).min(timeout);
-
-        loop {
-            let checks = self.pr_checks(pr).await?;
-            let counts = CheckCounts::tally(&checks);
-            let now = tokio::time::Instant::now();
-
-            if checks.is_empty() {
-                if now.duration_since(start) >= registration_grace {
-                    return Ok(checks);
-                }
-            } else {
-                if counts.pending == 0 {
-                    return Ok(checks);
-                }
-                if fail_fast && counts.fail > 0 {
-                    return Ok(checks);
-                }
-            }
-
-            if now >= deadline {
-                return Err(CliError::timeout(self.cli(), timeout));
-            }
-
-            tokio::time::sleep(interval.min(deadline - now)).await;
-        }
+    ) -> Result<ChecksWatch> {
+        watch_checks(|| self.pr_checks(pr), fail_fast, timeout, interval).await
     }
     /// The PR of the current branch.
     pub async fn current_pr(&self) -> Result<u64> {
@@ -274,6 +246,72 @@ where
         .await
         .map(RetryOutcome::into_inner)
         .map_err(|e| e.into_cause().expect("a failed retry carries its last error"))
+}
+
+/// How a check watch ended: the last snapshot it got, and whether the
+/// deadline passed before the checks settled.
+#[derive(Debug)]
+pub struct ChecksWatch {
+    pub checks: Vec<PrCheck>,
+    pub timed_out: bool,
+}
+
+/// Poll until the checks settle, the first one fails (with `fail_fast`), or
+/// `timeout` passes. A poll lost to the network or to its own timeout says
+/// nothing about the checks: the watch keeps its last snapshot and polls
+/// again, failing only when no poll got through before the deadline.
+pub(crate) async fn watch_checks<F, Fut>(
+    mut poll: F,
+    fail_fast: bool,
+    timeout: Duration,
+    interval: Duration,
+) -> Result<ChecksWatch>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PrCheck>>>,
+{
+    let start = tokio::time::Instant::now();
+    let deadline = start + timeout;
+    let registration_grace = Duration::from_secs(120).min(timeout);
+    let mut last = None;
+
+    loop {
+        let error = match poll().await {
+            Ok(checks) => {
+                let counts = CheckCounts::tally(&checks);
+                let settled = if checks.is_empty() {
+                    start.elapsed() >= registration_grace
+                } else {
+                    counts.pending == 0 || (fail_fast && counts.fail > 0)
+                };
+                if settled {
+                    return Ok(ChecksWatch { checks, timed_out: false });
+                }
+                last = Some(checks);
+                None
+            }
+            Err(e) if transient(&e) => {
+                tracing::debug!(error = %e, "check poll failed transiently; polling again");
+                Some(e)
+            }
+            Err(e) => return Err(e),
+        };
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return match last {
+                Some(checks) => Ok(ChecksWatch { checks, timed_out: true }),
+                None => Err(error.expect("a watch with no snapshot ended on a failed poll")),
+            };
+        }
+        tokio::time::sleep(interval.min(deadline - now)).await;
+    }
+}
+
+/// A failure that says nothing about what was asked: the network dropped,
+/// or the call itself ran out of time.
+fn transient(e: &CliError) -> bool {
+    matches!(e, CliError::Timeout { .. }) || super::network_failure(&e.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -435,37 +473,29 @@ pub struct ReleaseAsset {
     pub url: String,
 }
 
-fn non_zero_timestamp<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+/// gh reports a missing link or description as `""`; read that as absent.
+fn non_empty<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    Ok(raw.filter(|s| !s.is_empty() && !s.starts_with("0001-01-01")))
+    Ok(raw.filter(|s| !s.is_empty()))
 }
 
 /// One check from `gh pr checks`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct PrCheck {
     pub name: String,
     /// gh's classification: pass | fail | pending | skipping | cancel
     pub bucket: String,
-    /// Owning workflow; empty for commit statuses.
-    #[serde(default)]
+    /// Owning workflow; absent for commit statuses.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub workflow: String,
-    pub state: String,
-    /// gh emits a zero timestamp for checks that have not started or
-    /// finished; those read as `null` rather than the year 1.
-    #[serde(default, deserialize_with = "non_zero_timestamp")]
-    pub started_at: Option<String>,
-    #[serde(default, deserialize_with = "non_zero_timestamp")]
-    pub completed_at: Option<String>,
-    #[serde(default)]
+    /// The check's page, where its logs are.
+    #[serde(default, deserialize_with = "non_empty", skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "non_empty", skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default)]
-    pub event: Option<String>,
 }
 
 /// Checks tallied by bucket.

@@ -88,21 +88,25 @@ fn test_check_counts_conclusion_precedence() {
 }
 
 #[test]
-fn test_zero_timestamps_become_null() {
+fn test_empty_check_fields_are_absent() {
     let json = r#"[
-        {"bucket": "pending", "name": "slow", "workflow": "CI", "state": "IN_PROGRESS",
-         "startedAt": "2026-09-22T16:35:41Z", "completedAt": "0001-01-01T00:00:00Z",
-         "link": null, "description": null, "event": null},
-        {"bucket": "pending", "name": "queued", "workflow": "CI", "state": "QUEUED",
-         "startedAt": "0001-01-01T00:00:00Z", "completedAt": "0001-01-01T00:00:00Z",
-         "link": null, "description": null, "event": null}
+        {"bucket": "pending", "name": "slow", "workflow": "CI",
+         "link": "https://github.com/o/r/actions/runs/1/job/11", "description": ""},
+        {"bucket": "pass", "name": "codecov", "workflow": "",
+         "link": "", "description": "92% coverage"}
     ]"#;
     let checks: Vec<PrCheck> = serde_json::from_str(json).unwrap();
+    assert_eq!(checks[0].description, None);
+    assert_eq!(checks[1].link, None);
 
-    assert_eq!(checks[0].started_at.as_deref(), Some("2026-09-22T16:35:41Z"));
-    assert_eq!(checks[0].completed_at, None);
-    assert_eq!(checks[1].started_at, None);
-    assert_eq!(checks[1].completed_at, None);
+    assert_eq!(
+        serde_json::to_value(&checks).unwrap(),
+        serde_json::json!([
+            {"name": "slow", "bucket": "pending", "workflow": "CI",
+             "link": "https://github.com/o/r/actions/runs/1/job/11"},
+            {"name": "codecov", "bucket": "pass", "description": "92% coverage"}
+        ])
+    );
 }
 
 #[test]
@@ -195,4 +199,108 @@ async fn test_retrying_retries_network_failures_only() {
     .await;
     assert!(exhausted.unwrap_err().to_string().contains("connection reset"));
     assert_eq!(calls.get(), 4);
+}
+
+fn check(name: &str, bucket: &str) -> PrCheck {
+    PrCheck {
+        name: name.to_string(),
+        bucket: bucket.to_string(),
+        workflow: "CI".to_string(),
+        link: None,
+        description: None,
+    }
+}
+
+fn reset() -> CliError {
+    CliError::execution_failed(
+        "gh",
+        1,
+        r#"Post "https://api.github.com/graphql": read tcp 10.0.0.2:55499->140.82.121.6:443: read: connection reset by peer"#,
+    )
+}
+
+type Step = fn() -> Result<Vec<PrCheck>>;
+type Calls = std::rc::Rc<std::cell::Cell<usize>>;
+type Polled = std::future::Ready<Result<Vec<PrCheck>>>;
+
+/// Poll results in order; the last one repeats once the script runs out.
+fn scripted(script: Vec<Step>) -> (Calls, impl FnMut() -> Polled) {
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = calls.clone();
+    let poll = move || {
+        let n = counter.get();
+        counter.set(n + 1);
+        std::future::ready(script[n.min(script.len() - 1)]())
+    };
+    (calls, poll)
+}
+
+const MINUTE: Duration = Duration::from_secs(60);
+const TICK: Duration = Duration::from_secs(10);
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_rides_out_network_failures() {
+    let (calls, poll) = scripted(vec![
+        || Err(reset()),
+        || Err(CliError::timeout("gh", Duration::from_secs(30))),
+        || Ok(vec![check("build", "pass"), check("test", "pending")]),
+        || {
+            Err(CliError::execution_failed(
+                "gh",
+                1,
+                r#"Post "https://api.github.com/graphql": dial tcp 140.82.121.6:443: connect: operation timed out"#,
+            ))
+        },
+        || Ok(vec![check("build", "pass"), check("test", "pass")]),
+    ]);
+    let watch = watch_checks(poll, true, 10 * MINUTE, TICK).await.unwrap();
+    assert!(!watch.timed_out, "a call's own timeout is not the watch deadline");
+    assert_eq!(CheckCounts::tally(&watch.checks).conclusion(), "success");
+    assert_eq!(calls.get(), 5);
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_deadline_reports_last_snapshot() {
+    let (_, poll) =
+        scripted(vec![|| Ok(vec![check("build", "pass"), check("test", "pending")]), || {
+            Err(reset())
+        }]);
+    let watch = watch_checks(poll, true, MINUTE, TICK).await.unwrap();
+    assert!(watch.timed_out);
+    assert_eq!(CheckCounts::tally(&watch.checks).pending, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_fails_when_no_poll_gets_through() {
+    let (calls, poll) = scripted(vec![|| Err(reset())]);
+    let error = watch_checks(poll, true, MINUTE, TICK).await.unwrap_err();
+    assert!(error.to_string().contains("connection reset"));
+    assert!(calls.get() > 1, "network failures are retried until the deadline");
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_stops_at_once_on_other_errors() {
+    let (calls, poll) = scripted(vec![|| {
+        Err(CliError::execution_failed("gh", 1, "no pull requests found for branch \"x\""))
+    }]);
+    assert!(watch_checks(poll, true, MINUTE, TICK).await.is_err());
+    assert_eq!(calls.get(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_fail_fast() {
+    let script: Vec<fn() -> Result<Vec<PrCheck>>> =
+        vec![|| Ok(vec![check("build", "fail"), check("test", "pending")]), || {
+            Ok(vec![check("build", "fail"), check("test", "pass")])
+        }];
+
+    let (calls, poll) = scripted(script.clone());
+    let watch = watch_checks(poll, true, MINUTE, TICK).await.unwrap();
+    assert_eq!(calls.get(), 1, "fail_fast returns on the first failure");
+    assert_eq!(CheckCounts::tally(&watch.checks).pending, 1);
+
+    let (calls, poll) = scripted(script);
+    let watch = watch_checks(poll, false, MINUTE, TICK).await.unwrap();
+    assert_eq!(calls.get(), 2, "without fail_fast the watch waits for every check");
+    assert_eq!(CheckCounts::tally(&watch.checks).pending, 0);
 }

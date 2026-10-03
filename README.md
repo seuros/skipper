@@ -196,8 +196,7 @@ optional MCP task support. On `timeout_secs` (default 30 min) it returns the
 pending snapshot rather than an error.
 
 The `skipper://pr/{number}/checks` resource template returns the check
-matrix for any PR (checks grouped by workflow with bucket, timing, and
-links), and `skipper://pr/current/checks` resolves the current branch's PR.
+matrix for any PR (checks grouped by workflow with bucket and links), and `skipper://pr/current/checks` resolves the current branch's PR.
 
 ## PR watching (GitHub)
 
