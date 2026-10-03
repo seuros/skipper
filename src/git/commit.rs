@@ -286,10 +286,10 @@ fn collect_staged_paths(
             };
             if is_submodule_change {
                 changed_submodule = Some(path);
-                return Ok::<_, std::convert::Infallible>(ControlFlow::Break(()));
+                return Ok(ControlFlow::Break(()));
             }
             paths.push(path);
-            Ok::<_, std::convert::Infallible>(ControlFlow::Continue(()))
+            Ok(ControlFlow::Continue(()))
         },
     )
     .map_err(|e| GitError::Operation(e.to_string()))?;

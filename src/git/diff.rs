@@ -284,11 +284,7 @@ fn collect_tree_index_paths(
             }
             limit_exceeded = changed_paths.len() > MAX_CHANGED_FILES;
             let stop = limit_exceeded || cancel.load(Ordering::Acquire);
-            Ok::<_, std::convert::Infallible>(if stop {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            })
+            Ok(if stop { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
         },
     )
     .git_op()?;

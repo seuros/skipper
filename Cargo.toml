@@ -17,7 +17,7 @@ exclude = ["/tests", "**/tests.rs"]
 tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "time", "sync", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "1.0"
+toml = "1.1"
 semver = "1"
 thiserror = "2"
 mcp-host = { version = "0.6.0", features = ["macros"] }
@@ -32,7 +32,7 @@ url = "2.5.8"
 chrono-machines = { version = "0.8", features = ["async"] }
 throttle-machines = "0.2"
 tracing-subscriber = "0.3"
-gix = { version = "=0.87.1", features = ["max-performance-safe", "blob-diff", "status", "revision"] }
+gix = { version = "=0.88.0", features = ["max-performance-safe", "blob-diff", "status", "revision"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

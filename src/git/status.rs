@@ -75,7 +75,7 @@ fn collect_staged(repo: &gix::Repository) -> Result<Vec<FileStatus>, GitError> {
                 ChangeRef::Rewrite { location, .. } => location.to_string(),
             };
             staged.push(FileStatus { path });
-            Ok::<_, std::convert::Infallible>(ControlFlow::Continue(()))
+            Ok(ControlFlow::Continue(()))
         },
     )
     .git_op()?;

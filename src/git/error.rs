@@ -36,9 +36,3 @@ pub enum GitError {
     #[error("nothing staged to commit")]
     EmptyCommit,
 }
-
-impl From<gix::reference::find::existing::Error> for GitError {
-    fn from(e: gix::reference::find::existing::Error) -> Self {
-        GitError::RefNotFound(e.to_string())
-    }
-}
