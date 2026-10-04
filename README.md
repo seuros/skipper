@@ -203,7 +203,7 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://issue/{number}` | GitHub, Gitea/Forgejo | One issue of the current remote: title, state, author, creation time, labels, assignees, the full body and every comment, cleaned like PR comments |
 | `skipper://pr/{number}` | GitHub | What a merge decision needs: state, draft, head/base and head sha, mergeability, review decision, allowed and default merge methods, labels, files, body; `current` selects the current branch's |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
-| `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged) and, compactly, every inline review comment, conversation comment and review, bodies without collapsed `<details>`, HTML comments or HTML tags |
+| `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged) and every inline review comment, conversation comment and review, in full: HTML comments and tags dropped, collapsed `<details>` opened, and reviewer-bot machinery (CodeRabbit's tool transcripts, run info, buttons, share links) removed |
 | `skipper://pr/{number}/comments/{kind}` | GitHub | The same, keeping only `inline`, `comment` or `review` notes (`all` keeps every one) |
 | `skipper://watch/comments/{kind}` | GitHub | `skipper://pr/{number}/comments/{kind}` for every PR under `pr_watch`, in one read; recently finished PRs report their final state, and a PR that cannot be read reports its `error` |
 | `skipper://prs/{state}/{author}` | GitHub | The last 30 PRs in `open`, `closed`, `merged` or `all` state by an author (`me` for the authenticated user): number, state, merge time |

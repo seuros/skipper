@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitHubProvider, PAGE};
 use crate::error::Result;
-use crate::provider::text::readable;
+use crate::provider::text::readable_by;
 use crate::workspace::ForgeRepo;
 
 impl GitHubProvider {
@@ -106,15 +106,16 @@ pub(crate) fn login(user: Option<User>) -> String {
 
 impl RestNote {
     fn into_note(self, kind: &'static str) -> PrNote {
+        let author = login(self.user);
         PrNote {
             id: self.id,
             kind,
-            author: login(self.user),
+            body: readable_by(&author, self.body.as_deref().unwrap_or_default()),
+            author,
             path: self.path,
             line: self.line.or(self.original_line),
             state: self.state,
             at: self.created_at.or(self.submitted_at),
-            body: readable(self.body.as_deref().unwrap_or_default()),
         }
     }
 }

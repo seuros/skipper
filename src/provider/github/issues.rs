@@ -6,7 +6,7 @@ use serde::Deserialize;
 use super::{GitHubProvider, PAGE, User, login};
 use crate::error::{CliError, Result};
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
-use crate::provider::text::readable;
+use crate::provider::text::readable_by;
 
 const LIST_QUERY: &str = r"query($owner: String!, $name: String!, $first: Int!, $states: [IssueState!]) {
   repository(owner: $owner, name: $name) {
@@ -75,15 +75,16 @@ impl GitHubProvider {
         }
         notes.sort_by(|a, b| a.at.cmp(&b.at));
 
+        let author = login(issue.user);
         Ok(Some(IssueThread {
             number: issue.number,
             title: issue.title,
             state: issue.state,
-            author: login(issue.user),
+            body: readable_by(&author, issue.body.as_deref().unwrap_or_default()),
+            author,
             created_at: issue.created_at,
             labels: issue.labels.into_iter().map(|l| l.name).collect(),
             assignees: issue.assignees.unwrap_or_default().into_iter().map(|u| u.login).collect(),
-            body: readable(issue.body.as_deref().unwrap_or_default()),
             notes,
         }))
     }
@@ -171,11 +172,12 @@ struct RestComment {
 
 impl RestComment {
     fn into_note(self) -> IssueNote {
+        let author = login(self.user);
         IssueNote {
             id: self.id,
-            author: login(self.user),
+            body: readable_by(&author, self.body.as_deref().unwrap_or_default()),
+            author,
             at: self.created_at,
-            body: readable(self.body.as_deref().unwrap_or_default()),
         }
     }
 }

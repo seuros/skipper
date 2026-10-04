@@ -5,7 +5,7 @@ use serde::Deserialize;
 use super::ForgejoClient;
 use crate::error::Result;
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
-use crate::provider::text::readable;
+use crate::provider::text::readable_by;
 
 impl ForgejoClient {
     /// The most recently updated issues of `owner/name` in `state`:
@@ -111,15 +111,17 @@ impl Issue {
     }
 
     fn into_thread(mut self, notes: Vec<IssueNote>) -> IssueThread {
+        let labels = self.labels();
+        let author = author(self.user, self.original_author);
         IssueThread {
             number: self.number,
-            labels: self.labels(),
+            labels,
             assignees: self.assignees.unwrap_or_default().into_iter().map(|u| u.login).collect(),
-            author: author(self.user, self.original_author),
+            body: readable_by(&author, &self.body),
+            author,
             created_at: self.created_at,
             title: self.title,
             state: self.state,
-            body: readable(&self.body),
             notes,
         }
     }
@@ -127,11 +129,12 @@ impl Issue {
 
 impl Comment {
     fn into_note(self) -> IssueNote {
+        let author = author(self.user, self.original_author);
         IssueNote {
             id: self.id,
-            author: author(self.user, self.original_author),
+            body: readable_by(&author, &self.body),
+            author,
             at: self.created_at,
-            body: readable(&self.body),
         }
     }
 }

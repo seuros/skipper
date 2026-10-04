@@ -10,7 +10,7 @@ use crate::error::{CliError, Result};
 use crate::provider::github::{
     ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login, run_bucket, status_bucket,
 };
-use crate::provider::text::{EVENT_BODY_LIMIT, clip, readable};
+use crate::provider::text::{EVENT_BODY_LIMIT, clip, readable_by};
 
 /// Pages of new comments read per poll before waiting for the next one.
 const MAX_PAGES: usize = 5;
@@ -249,11 +249,14 @@ impl GithubPr {
                     events.push((
                         c.id,
                         Event::Comment {
-                            author: login(c.user),
                             body: clip(
-                                readable(c.body.as_deref().unwrap_or_default()),
+                                readable_by(
+                                    &login(c.user.clone()),
+                                    c.body.as_deref().unwrap_or_default(),
+                                ),
                                 EVENT_BODY_LIMIT,
                             ),
+                            author: login(c.user),
                             url: c.html_url,
                             at: c.created_at,
                             path: c.path,
@@ -288,12 +291,15 @@ impl GithubPr {
                     events.push((
                         r.id,
                         Event::Review {
-                            author: login(r.user),
-                            state: r.state,
                             body: clip(
-                                readable(r.body.as_deref().unwrap_or_default()),
+                                readable_by(
+                                    &login(r.user.clone()),
+                                    r.body.as_deref().unwrap_or_default(),
+                                ),
                                 EVENT_BODY_LIMIT,
                             ),
+                            author: login(r.user),
+                            state: r.state,
                             url: r.html_url,
                             at: r.submitted_at,
                         },

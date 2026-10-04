@@ -1,9 +1,16 @@
 //! Forge comment bodies cut down to their readable text.
 
+pub(crate) mod noise;
+
 /// `pr_watch` event bodies are cut past this many chars; the event's `url` and
 /// `skipper://pr/{number}/comments` carry the whole text.
 #[cfg(feature = "github")]
 pub(crate) const EVENT_BODY_LIMIT: usize = 1500;
+
+/// `author`'s `body`, readable, without the noise of a known reviewer bot.
+pub(crate) fn readable_by(author: &str, body: &str) -> String {
+    readable(&noise::strip(author, body))
+}
 
 /// `body` without HTML comments, markup tags or alert banners, blank runs
 /// squeezed. Collapsed `<details>` open up: the summary stays as a line, the
