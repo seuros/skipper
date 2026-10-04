@@ -30,6 +30,7 @@ impl SkipperServer {
     #[mcp_tool(
         name = "pr_merge",
         description = "Merge a GitHub PR at the head sha it was checked at. Refuses drafts, conflicts, and failing or running checks unless require_checks=false. Asks the user to approve unless confirm is off",
+        task_support = "optional",
         output = "PrMergeResult",
         destructive = true,
         open_world = true,
