@@ -21,7 +21,7 @@ mod runs;
 pub use client::ApiResponse;
 pub use discussion::{PrDiscussion, PrNote};
 pub(crate) use discussion::{User, login};
-pub use pulls::{PrFile, PrOverview};
+pub use pulls::{CheckVerdict, PrFile, PrOverview};
 pub use runs::OwnedRepo;
 
 #[derive(Deserialize)]
@@ -305,14 +305,23 @@ pub struct PrCheck {
     pub description: Option<String>,
 }
 
-/// Checks tallied by bucket.
+/// Checks tallied by bucket; buckets with none are left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, JsonSchema)]
 pub struct CheckCounts {
+    #[serde(skip_serializing_if = "is_zero")]
     pub pass: u32,
+    #[serde(skip_serializing_if = "is_zero")]
     pub fail: u32,
+    #[serde(skip_serializing_if = "is_zero")]
     pub pending: u32,
+    #[serde(skip_serializing_if = "is_zero")]
     pub skipped: u32,
+    #[serde(skip_serializing_if = "is_zero")]
     pub cancelled: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 impl CheckCounts {

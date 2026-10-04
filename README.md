@@ -201,9 +201,10 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, trying the current remote, then `origin`, when several match |
 | `skipper://issues/{state}` | GitHub, Gitea/Forgejo | The current remote's last 30 issues in `open`, `closed` or `all` state, latest update first: number, title, state, author, labels, comment count, created and updated times |
 | `skipper://issue/{number}` | GitHub, Gitea/Forgejo | One issue of the current remote: title, state, author, creation time, labels, assignees, the full body and every comment, cleaned like PR comments |
-| `skipper://pr/{number}` | GitHub | What a merge decision needs: state, draft, head/base and head sha, mergeability, review decision, allowed and default merge methods, labels, files, body; `current` selects the current branch's |
-| `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
-| `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged) and every inline review comment, conversation comment and review, in full: HTML comments and tags dropped, collapsed `<details>` opened, and reviewer-bot machinery (CodeRabbit's tool transcripts, run info, buttons, share links) removed |
+| `skipper://pr/{number}` | GitHub | What a merge decision needs, in one read: state, draft, head/base and head sha, mergeability, review decision, the checks' verdict (conclusion, counts, failed checks), allowed and default merge methods, labels, size; `current` selects the current branch's |
+| `skipper://pr/{number}/files` | GitHub | The files a PR changes, with added and deleted lines |
+| `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR, by workflow; links and descriptions on failures only; `current` selects the current branch's |
+| `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged), its description, and every inline review comment, conversation comment and review, in full: HTML comments and tags dropped, entities decoded, collapsed `<details>` opened, and bot machinery removed (CodeRabbit's tool transcripts, run info, buttons, share links; release-please's greeting and footer) |
 | `skipper://pr/{number}/comments/{kind}` | GitHub | The same, keeping only `inline`, `comment` or `review` notes (`all` keeps every one) |
 | `skipper://watch/comments/{kind}` | GitHub | `skipper://pr/{number}/comments/{kind}` for every PR under `pr_watch`, in one read; recently finished PRs report their final state, and a PR that cannot be read reports its `error` |
 | `skipper://prs/{state}/{author}` | GitHub | The last 30 PRs in `open`, `closed`, `merged` or `all` state by an author (`me` for the authenticated user): number, state, merge time |
@@ -219,8 +220,8 @@ Issue resources read from one remote, picked fresh on every read:
 
 With several remotes and none of these, the read fails and says so rather
 than guess. Switching branches or running `git branch -u` moves the next read
-to the other forge; no restart. Every issue payload names the `remote`,
-`forge` and `repo` it came from. A Gitea/Forgejo token needs the `read:issue`
+to the other forge; no restart. Every issue payload names the `forge` and
+`repo` it came from. A Gitea/Forgejo token needs the `read:issue`
 scope.
 
 GitHub-only reads (PR checks and discussion, CI runs, `pr_watch`) take the
@@ -236,8 +237,8 @@ and `repo` on `pr_watch`, `pr_merge` and `pr_build_wait`, as a remote name or
 history, not intent (`trailblazer/representable` is a fork of roxml). A PR
 missing from a fork says what the parent is, and the agent picks. A branch's
 PR read on another repo is still the one from this checkout's branch. Every
-read names the `repo` (and `remote`) it came from, so an empty list is never
-mistaken for the wrong repo's answer.
+read names the `repo` it came from, so an empty list is never mistaken for the
+wrong repo's answer.
 
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server

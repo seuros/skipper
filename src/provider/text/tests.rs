@@ -30,3 +30,9 @@ fn test_readable_drops_html_tags_but_keeps_code() {
     let body = "<a href=\"https://x\"><img src=\"y.svg\" alt=\"z\"></a>\n\n> [!WARNING]\n> ## Review limit reached\n\nKeep `a < b` and `Vec<u8>` and <sub>tiny</sub>.";
     assert_eq!(readable(body), "> ## Review limit reached\n\nKeep `a < b` and `Vec<u8>` and tiny.");
 }
+
+#[test]
+fn test_readable_decodes_entities_outside_code() {
+    let body = "Use &lt;details&gt; &amp; keep &amp;lt;\n```html\n&lt;b&gt;\n```";
+    assert_eq!(readable(body), "Use <details> & keep &lt;\n```html\n&lt;b&gt;\n```");
+}

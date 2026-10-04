@@ -82,7 +82,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}{?repo}",
         name = "pr",
         title = "PR overview",
-        description = "GitHub PR: title, state, draft, author, head, base, head_sha, mergeable, merge_state, review, merge_methods, default_method, labels, files, body. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
+        description = "GitHub PR, to decide on a merge: state, draft, author, head, base, head_sha, mergeable, merge_state, review, checks verdict, merge_methods, default_method, labels, size. Description: /comments; files: /files. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -92,7 +92,7 @@ impl SkipperServer {
         let overview = gh.pr_overview(&repo, pr).await.map_err(forge_error)?;
         json_resource(
             with_repo(format!("skipper://pr/{number}"), spec.as_deref()),
-            &FromRemote::new(&repo, overview),
+            &Source::repo(&repo, overview),
         )
     }
 
@@ -101,7 +101,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/checks{?repo}",
         name = "pr_checks",
         title = "PR check matrix",
-        description = "GitHub PR checks by workflow: bucket, link, conclusion. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
+        description = "GitHub PR checks by workflow: name, bucket; link and description on failures. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_checks(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -115,6 +115,10 @@ impl SkipperServer {
         let counts = CheckCounts::tally(&checks);
         let mut workflows = serde_json::Map::new();
         for mut check in checks {
+            if !matches!(check.bucket.as_str(), "fail" | "cancel") {
+                check.link = None;
+                check.description = None;
+            }
             let key = match std::mem::take(&mut check.workflow) {
                 workflow if workflow.is_empty() => "(statuses)".to_string(),
                 workflow => workflow,
@@ -137,7 +141,26 @@ impl SkipperServer {
         });
         json_resource(
             with_repo(format!("skipper://pr/{number}/checks"), spec.as_deref()),
-            &FromRemote::new(&repo, matrix),
+            &Source::repo(&repo, matrix),
+        )
+    }
+
+    #[cfg(feature = "github")]
+    #[mcp_resource_template(
+        uri_template = "skipper://pr/{number}/files{?repo}",
+        name = "pr_files",
+        title = "PR changed files",
+        description = "GitHub PR changed files: path, additions, deletions, change. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
+        mime_type = "application/json"
+    )]
+    pub(crate) async fn pr_files(&self, ctx: Ctx<'_>) -> ResourceResult {
+        let (number, pr) = pr_param(&ctx)?;
+        let spec = ctx.get_uri_param("repo");
+        let (gh, repo, pr) = pr_target(&self.env, spec.as_deref(), pr).await?;
+        let files = gh.pr_files(&repo, pr).await.map_err(forge_error)?;
+        json_resource(
+            with_repo(format!("skipper://pr/{number}/files"), spec.as_deref()),
+            &Source::repo(&repo, serde_json::json!({ "pr": pr, "files": files })),
         )
     }
 
@@ -146,7 +169,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/comments{?repo}",
         name = "pr_comments",
         title = "PR state and discussion",
-        description = "GitHub PR state open|closed|merged + notes inline|comment|review: id, kind, author, path, line, body. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
+        description = "GitHub PR state open|closed|merged + notes description|inline|comment|review: id, kind, author, path, line, body. number=current: this branch's PR. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -155,7 +178,7 @@ impl SkipperServer {
         let (repo, discussion) = discussion(&self.env, spec.as_deref(), pr, "all").await?;
         json_resource(
             with_repo(format!("skipper://pr/{number}/comments"), spec.as_deref()),
-            &FromRemote::new(&repo, discussion),
+            &Source::repo(&repo, discussion),
         )
     }
 
@@ -164,7 +187,7 @@ impl SkipperServer {
         uri_template = "skipper://pr/{number}/comments/{kind}{?repo}",
         name = "pr_comments_kind",
         title = "PR discussion of one kind",
-        description = "skipper://pr/{number}/comments keeping only notes of kind: inline | comment | review | all",
+        description = "skipper://pr/{number}/comments keeping only notes of kind: description | inline | comment | review | all",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_comments_kind(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -174,7 +197,7 @@ impl SkipperServer {
         let (repo, discussion) = discussion(&self.env, spec.as_deref(), pr, &kind).await?;
         json_resource(
             with_repo(format!("skipper://pr/{number}/comments/{kind}"), spec.as_deref()),
-            &FromRemote::new(&repo, discussion),
+            &Source::repo(&repo, discussion),
         )
     }
 
@@ -206,7 +229,7 @@ impl SkipperServer {
         while let Some(joined) = tasks.join_next().await {
             let (pr, result) = joined.map_err(|e| ResourceError::Internal(e.to_string()))?;
             let value = match result {
-                Ok((repo, d)) => serde_json::to_value(FromRemote::new(&repo, d))
+                Ok((repo, d)) => serde_json::to_value(Source::repo(&repo, d))
                     .map_err(|e| ResourceError::Internal(e.to_string()))?,
                 Err(e) => serde_json::json!({ "pr": pr, "error": e.to_string() }),
             };
@@ -237,7 +260,7 @@ impl SkipperServer {
             .map_err(forge_error)?;
         json_resource(
             with_repo(format!("skipper://prs/{state}/{author}"), spec.as_deref()),
-            &FromRemote::new(&repo, serde_json::json!({ "prs": prs })),
+            &Source::repo(&repo, serde_json::json!({ "prs": prs })),
         )
     }
 
@@ -269,7 +292,7 @@ impl SkipperServer {
 
         json_resource(
             with_repo(format!("skipper://issues/{state}"), spec.as_deref()),
-            &FromRemote::new(&target, serde_json::json!({ "issues": issues })),
+            &Source::forge(&target, serde_json::json!({ "issues": issues })),
         )
     }
 
@@ -312,28 +335,34 @@ impl SkipperServer {
         };
         json_resource(
             with_repo(format!("skipper://issue/{number}"), spec.as_deref()),
-            &FromRemote::new(&target, thread),
+            &Source::forge(&target, thread),
         )
     }
 }
 
-/// Forge data tagged with where it came from: which repo answered, and through
-/// which remote (absent for a `repo=owner/name` read).
+/// Forge data tagged with the repo that answered, so an empty list is never
+/// read as another repo's answer. `forge` only where reads span forges.
 #[cfg(any(feature = "github", feature = "tea"))]
 #[derive(serde::Serialize)]
-struct FromRemote<'a, T> {
-    #[serde(skip_serializing_if = "str::is_empty")]
-    remote: &'a str,
-    forge: &'static str,
+struct Source<T> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forge: Option<&'static str>,
     repo: String,
     #[serde(flatten)]
     data: T,
 }
 
 #[cfg(any(feature = "github", feature = "tea"))]
-impl<'a, T> FromRemote<'a, T> {
-    fn new(target: &'a crate::workspace::ForgeRepo, data: T) -> Self {
-        Self { remote: &target.remote, forge: target.forge, repo: target.full_name(), data }
+impl<T> Source<T> {
+    /// A read on one forge (GitHub PRs): the repo alone.
+    #[cfg(feature = "github")]
+    fn repo(target: &crate::workspace::ForgeRepo, data: T) -> Self {
+        Self { forge: None, repo: target.full_name(), data }
+    }
+
+    /// A read any forge may answer (issues): the forge too.
+    fn forge(target: &crate::workspace::ForgeRepo, data: T) -> Self {
+        Self { forge: Some(target.forge), repo: target.full_name(), data }
     }
 }
 
@@ -442,7 +471,7 @@ fn forge_error(e: crate::error::CliError) -> ResourceError {
 
 #[cfg(feature = "github")]
 fn note_kind(ctx: &Ctx<'_>) -> std::result::Result<String, ResourceError> {
-    uri_choice(ctx, "kind", "all", &["inline", "comment", "review", "all"])
+    uri_choice(ctx, "kind", "all", &["description", "inline", "comment", "review", "all"])
 }
 
 /// URI param `name`, `default` when absent; must be one of `allowed`.

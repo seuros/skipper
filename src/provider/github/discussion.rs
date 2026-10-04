@@ -1,5 +1,5 @@
-//! A PR's discussion over REST: inline review comments, conversation
-//! comments and reviews, bodies cut down to their readable text.
+//! A PR's discussion over REST: its description, inline review comments,
+//! conversation comments and reviews, bodies cut down to their readable text.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,20 @@ impl GitHubProvider {
             ("review", format!("{pull}/reviews")),
         ];
         let mut notes = Vec::new();
+        let author = login(head.user);
+        let description = readable_by(&author, head.body.as_deref().unwrap_or_default());
+        if !description.is_empty() {
+            notes.push(PrNote {
+                id: head.id,
+                kind: "description",
+                author,
+                path: None,
+                line: None,
+                state: None,
+                at: Some(head.created_at),
+                body: description,
+            });
+        }
         for (kind, path) in sources {
             for page in 1.. {
                 let batch: Vec<RestNote> = self
@@ -77,8 +91,12 @@ pub struct PrNote {
 
 #[derive(Deserialize)]
 struct RestPull {
+    id: u64,
     state: String,
     merged: bool,
+    user: Option<User>,
+    body: Option<String>,
+    created_at: String,
 }
 
 #[derive(Deserialize)]

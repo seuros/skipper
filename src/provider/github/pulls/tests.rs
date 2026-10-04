@@ -47,27 +47,46 @@ fn test_search_query_scopes_to_repo_and_rejects_qualifier_injection() {
 }
 
 #[test]
-fn test_overview_lists_allowed_methods_and_cleans_body() {
+fn test_overview_is_the_merge_decision_and_nothing_else() {
     let repo: OverviewRepo = serde_json::from_str(
         r#"{"mergeCommitAllowed":false,"squashMergeAllowed":true,"rebaseMergeAllowed":true,
             "viewerDefaultMergeMethod":"SQUASH","pullRequest":null}"#,
     )
     .expect("repo");
     let pull: OverviewPull = serde_json::from_str(
-        r#"{"number":6,"title":"chore: release","state":"OPEN","isDraft":false,
-            "createdAt":"c","updatedAt":"u","mergedAt":null,
-            "body":"Notes<!-- release-please -->\n<details>log</details>","author":null,
-            "headRefName":"release","baseRefName":"master","headRefOid":"abc",
-            "mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":null,
-            "additions":3,"deletions":1,"changedFiles":1,"labels":{"nodes":[{"name":"autorelease: pending"}]},
-            "files":{"nodes":[{"path":"Cargo.toml","additions":3,"deletions":1,"changeType":"MODIFIED"}]}}"#,
+        r#"{"number":7,"title":"chore: release","state":"OPEN","isDraft":false,"mergedAt":null,
+            "author":null,"headRefName":"release","baseRefName":"master","headRefOid":"abc",
+            "mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","reviewDecision":null,
+            "additions":16,"deletions":3,"changedFiles":4,"labels":{"nodes":[]}}"#,
     )
     .expect("pull");
+    let check = |workflow: &str, name: &str, bucket: &str| super::super::PrCheck {
+        name: name.into(),
+        bucket: bucket.into(),
+        workflow: workflow.into(),
+        link: None,
+        description: None,
+    };
+    let verdict = CheckVerdict::of(&[
+        check("CI", "lint", "fail"),
+        check("CI", "test", "skipping"),
+        check("", "codecov", "pass"),
+    ]);
 
-    let overview = pull.into_overview(&repo);
+    let overview = pull.into_overview(&repo, verdict);
     assert_eq!(overview.merge_methods, ["squash", "rebase"]);
     assert_eq!(overview.default_method, "squash");
-    assert_eq!((overview.state.as_str(), overview.merge_state.as_str()), ("open", "clean"));
-    assert_eq!((overview.author.as_str(), overview.body.as_str()), ("ghost", "Notes\nlog"));
-    assert_eq!(overview.files[0].change, "modified");
+    assert_eq!(overview.author, "ghost");
+    assert_eq!(
+        serde_json::to_value(&overview.checks).expect("json"),
+        serde_json::json!({
+            "conclusion": "failure",
+            "counts": { "pass": 1, "fail": 1, "skipped": 1 },
+            "failed": ["CI / lint"]
+        })
+    );
+    let json = serde_json::to_value(&overview).expect("json");
+    for absent in ["draft", "labels", "review", "merged_at", "body", "files"] {
+        assert!(json.get(absent).is_none(), "{absent} should be left out: {json}");
+    }
 }

@@ -5,18 +5,24 @@
 
 use std::borrow::Cow;
 
-/// A reviewer bot whose output skipper knows how to trim.
+/// A bot whose output skipper knows how to trim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Bot {
     CodeRabbit,
+    /// Release PRs, opened as `github-actions`.
+    ReleasePlease,
 }
 
 impl Bot {
-    /// The bot behind `login`, as REST (`coderabbitai[bot]`) or GraphQL
-    /// (`coderabbitai`) spells it.
-    pub(crate) fn of(login: &str) -> Option<Self> {
+    /// The bot behind `login` (REST `coderabbitai[bot]`, GraphQL
+    /// `coderabbitai`). `github-actions` posts for many workflows, so
+    /// release-please is told by its body.
+    pub(crate) fn of(login: &str, body: &str) -> Option<Self> {
         match login.strip_suffix("[bot]").unwrap_or(login) {
             "coderabbitai" => Some(Self::CodeRabbit),
+            "github-actions" if body.contains("googleapis/release-please") => {
+                Some(Self::ReleasePlease)
+            }
             _ => None,
         }
     }
@@ -24,10 +30,21 @@ impl Bot {
 
 /// `body` without `author`'s noise, when `author` is a known bot.
 pub(crate) fn strip<'a>(author: &str, body: &'a str) -> Cow<'a, str> {
-    match Bot::of(author) {
+    match Bot::of(author, body) {
         Some(Bot::CodeRabbit) => Cow::Owned(coderabbit(body)),
+        Some(Bot::ReleasePlease) => Cow::Owned(release_please(body)),
         None => Cow::Borrowed(body),
     }
+}
+
+/// Release-please's greeting and footer; the release notes stay.
+fn release_please(body: &str) -> String {
+    const NOISE: [&str; 2] =
+        [":robot: I have created a release", "This PR was generated with [Release Please]"];
+    body.lines()
+        .filter(|line| !NOISE.iter().any(|n| line.trim_start().starts_with(n)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `<details>` blocks CodeRabbit fills with machinery, by summary.

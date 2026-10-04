@@ -97,6 +97,16 @@ fn test_people_and_unknown_blocks_are_opened_not_filtered() {
     let unknown =
         "<details>\n<summary>⚠️ Outside diff range comments (2)</summary>\n\nfinding\n</details>";
     assert!(coderabbit(unknown).contains("finding"));
-    assert_eq!(Bot::of("coderabbitai"), Some(Bot::CodeRabbit));
-    assert_eq!(Bot::of("seuros"), None);
+    assert_eq!(Bot::of("coderabbitai", ""), Some(Bot::CodeRabbit));
+    assert_eq!(Bot::of("seuros", ""), None);
+}
+
+#[test]
+fn test_release_please_keeps_the_notes_only() {
+    let body = ":robot: I have created a release *beep* *boop*\n---\n\n\n## [0.7.0](https://github.com/seuros/skipper/compare/skipper-v0.6.0...skipper-v0.7.0) (2026-10-04)\n\n\n### Bug Fixes\n\n* keep collapsed &lt;details&gt; content in comment bodies ([c6a1c8b](https://github.com/seuros/skipper/commit/c6a1c8b))\n\n---\nThis PR was generated with [Release Please](https://github.com/googleapis/release-please). See [documentation](https://github.com/googleapis/release-please#release-please).";
+    assert_eq!(
+        readable_by("github-actions", body),
+        "## [0.7.0](https://github.com/seuros/skipper/compare/skipper-v0.6.0...skipper-v0.7.0) (2026-10-04)\n\n### Bug Fixes\n\n* keep collapsed <details> content in comment bodies ([c6a1c8b](https://github.com/seuros/skipper/commit/c6a1c8b))"
+    );
+    assert_eq!(Bot::of("github-actions", "Deploy finished"), None);
 }

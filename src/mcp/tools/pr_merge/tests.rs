@@ -15,14 +15,11 @@ fn pr(state: &str, draft: bool, mergeable: &str) -> PrOverview {
         review: None,
         merge_methods: vec!["squash".into(), "rebase".into()],
         default_method: "rebase".into(),
+        checks: crate::provider::github::CheckVerdict::of(&[]),
         labels: vec![],
         additions: 0,
         deletions: 0,
         changed_files: 0,
-        files: vec![],
-        body: String::new(),
-        created_at: String::new(),
-        updated_at: String::new(),
         merged_at: None,
     }
 }

@@ -2,7 +2,7 @@ use super::{
     Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
     mcp_tool,
 };
-use crate::provider::github::{CheckCounts, GitHubProvider, PrOverview};
+use crate::provider::github::{GitHubProvider, PrOverview};
 use mcp_host::prelude::structured;
 use serde::Serialize;
 
@@ -45,16 +45,12 @@ impl SkipperServer {
         let method = merge_method(&pr, params.0.method.as_deref())?;
 
         if params.0.require_checks.unwrap_or(true) {
-            let checks = gh.pr_checks(&repo, number).await.map_err(cli_error)?;
-            let counts = CheckCounts::tally(&checks);
+            let counts = &pr.checks.counts;
             if counts.fail > 0 || counts.cancelled > 0 || counts.pending > 0 {
                 return Err(ToolError::InvalidArguments(format!(
                     "#{number} checks are {}: {} failed, {} cancelled, {} pending; wait, fix, \
                      or pass require_checks=false",
-                    counts.conclusion(),
-                    counts.fail,
-                    counts.cancelled,
-                    counts.pending
+                    pr.checks.conclusion, counts.fail, counts.cancelled, counts.pending
                 )));
             }
         }

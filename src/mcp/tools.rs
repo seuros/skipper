@@ -272,6 +272,11 @@ pub fn router() -> McpRouter<SkipperServer> {
         templates = templates
             .with_template(SkipperServer::pr_template_info(), SkipperServer::pr_handler, None)
             .with_template(
+                SkipperServer::pr_files_template_info(),
+                SkipperServer::pr_files_handler,
+                None,
+            )
+            .with_template(
                 SkipperServer::pr_checks_template_info(),
                 SkipperServer::pr_checks_handler,
                 None,

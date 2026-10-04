@@ -29,17 +29,36 @@ pub(crate) fn readable(body: &str) -> String {
         }
     }
 
-    let mut lines: Vec<&str> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_fence = false;
     for line in kept.lines().map(str::trim_end).filter(|l| !l.trim_start().starts_with("> [!")) {
         if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
             continue;
         }
-        lines.push(line);
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        }
+        // GitHub shows entities decoded, except in code.
+        lines.push(if in_fence { line.to_string() } else { decode_entities(line) });
     }
-    while lines.last().is_some_and(|l| matches!(l.trim(), "" | "---")) {
+    let rule = |l: &String| matches!(l.trim(), "" | "---");
+    while lines.last().is_some_and(rule) {
         lines.pop();
     }
-    lines.join("\n").trim().to_string()
+    let lead = lines.iter().take_while(|l| rule(l)).count();
+    lines[lead..].join("\n").trim().to_string()
+}
+
+/// The entities markdown writers escape; `&amp;` last, so `&amp;lt;` stays text.
+fn decode_entities(line: &str) -> String {
+    if !line.contains('&') {
+        return line.to_string();
+    }
+    line.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 }
 
 /// `text` cut past `limit` chars, marked with `…`.
