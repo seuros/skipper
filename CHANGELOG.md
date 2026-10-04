@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/seuros/skipper/compare/skipper-v0.7.0...skipper-v0.7.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* let pr_merge wait past the call timeout for approval ([23d5432](https://github.com/seuros/skipper/commit/23d5432f3e16f3fa1eb32c2fe88b52f167a79d8c))
+* retry git fetch, pull and push on network failures ([cc57ad0](https://github.com/seuros/skipper/commit/cc57ad06aca120942d155b1e6aaae4e1559f1117))
+
 ## [0.7.0](https://github.com/seuros/skipper/compare/skipper-v0.6.0...skipper-v0.7.0) (2026-10-04)
 
 
