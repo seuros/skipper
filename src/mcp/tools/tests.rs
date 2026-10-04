@@ -28,11 +28,11 @@ fn test_router_registers_every_tool() {
     {
         let templates: Vec<String> =
             router.templates.list().into_iter().map(|t| t.uri_template).collect();
-        assert!(templates.contains(&"skipper://pr/{number}/checks".to_string()));
-        assert!(templates.contains(&"skipper://pr/{number}/comments".to_string()));
-        assert!(templates.contains(&"skipper://pr/{number}/comments/{kind}".to_string()));
+        assert!(templates.contains(&"skipper://pr/{number}/checks{?repo}".to_string()));
+        assert!(templates.contains(&"skipper://pr/{number}/comments{?repo}".to_string()));
+        assert!(templates.contains(&"skipper://pr/{number}/comments/{kind}{?repo}".to_string()));
         assert!(templates.contains(&"skipper://watch/comments/{kind}".to_string()));
-        assert!(templates.contains(&"skipper://prs/{state}/{author}".to_string()));
+        assert!(templates.contains(&"skipper://prs/{state}/{author}{?repo}".to_string()));
     }
 }
 

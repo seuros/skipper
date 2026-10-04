@@ -11,6 +11,8 @@ use std::time::Duration;
 pub struct PrBuildWaitParams {
     /// PR number (default: the PR belonging to the current branch)
     pr: Option<u64>,
+    /// Repo to read: a remote name or owner/name (default: the current remote)
+    repo: Option<String>,
     /// Stop watching at the first failing check (default: true)
     fail_fast: Option<bool>,
     /// Give up after this many seconds and report the pending snapshot
@@ -74,12 +76,11 @@ impl SkipperServer {
             ));
         }
 
-        use crate::environment::Environment as _;
-
-        let repo = crate::workspace::forge_repo_on(&self.env, "github")
-            .map_err(|e| cli_error(e.into()))?;
         let gh = GitHubProvider::new();
-        let pr = gh.resolve_pr(&repo, params.0.pr, self.env.cwd()).await.map_err(cli_error)?;
+        let (repo, pr) = gh
+            .locate_pr(&self.env, params.0.repo.as_deref(), params.0.pr)
+            .await
+            .map_err(cli_error)?;
         let fail_fast = params.0.fail_fast.unwrap_or(true);
         let timeout = Duration::from_secs(params.0.timeout_secs.unwrap_or(1800).clamp(30, 3600));
         let interval = Duration::from_secs(params.0.poll_secs.unwrap_or(10).clamp(5, 60));

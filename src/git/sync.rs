@@ -35,7 +35,7 @@ pub async fn fetch(cwd: &Path, remote: Option<&str>) -> Result<Vec<SyncOutcome>,
 /// Fast-forward the checked-out branch to its upstream; refuses to merge.
 pub async fn pull(cwd: &Path) -> Result<SyncOutcome, GitError> {
     let upstream = crate::git::current_remote(cwd)?
-        .filter(|current| current.source == crate::git::RemoteSource::Upstream)
+        .filter(|current| current.source == crate::git::RemoteSource::Tracked)
         .ok_or_else(|| {
             GitError::InvalidInput(
                 "branch has no upstream; set one with `git branch -u <remote>/<branch>`".into(),

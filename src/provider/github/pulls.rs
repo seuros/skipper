@@ -36,8 +36,13 @@ const SEARCH_QUERY: &str = r"query($q: String!) {
 }";
 
 impl GitHubProvider {
-    /// The PR whose head is `branch`.
-    pub async fn pr_for_branch(&self, repo: &ForgeRepo, branch: &str) -> Result<u64> {
+    /// The PR in `repo` whose head is `head_owner`'s `branch`.
+    pub async fn pr_for_branch(
+        &self,
+        repo: &ForgeRepo,
+        head_owner: &str,
+        branch: &str,
+    ) -> Result<u64> {
         #[derive(Deserialize)]
         struct Data {
             repository: Option<Repository>,
@@ -56,7 +61,7 @@ impl GitHubProvider {
             .ok_or_else(|| CliError::no_target(format!("no repository {}", repo.full_name())))?
             .pull_requests
             .nodes;
-        pick_branch_pr(&repo.owner, &prs).ok_or_else(|| {
+        pick_branch_pr(head_owner, &prs).ok_or_else(|| {
             CliError::no_target(if prs.is_empty() {
                 format!("no pull request for {branch} in {}; pass the PR number", repo.full_name())
             } else {

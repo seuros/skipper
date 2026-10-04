@@ -12,6 +12,8 @@ use std::time::Duration;
 pub struct PrWatchParams {
     /// PR number (default: this branch's PR)
     pr: Option<u64>,
+    /// Repo to read: a remote name or owner/name (default: the current remote)
+    repo: Option<String>,
     /// Wake on these besides merged/closed (default: all). [] = merge/close only
     until: Option<Vec<EventKind>>,
     /// Max seconds to block (default: 600, clamped to 10..=3600)
@@ -50,7 +52,11 @@ impl SkipperServer {
         }
 
         let until = params.0.until.map_or_else(EventKind::all, BTreeSet::from_iter);
-        let (pr, _) = self.pr_watcher.add(params.0.pr, until).await.map_err(cli_error)?;
+        let (pr, _) = self
+            .pr_watcher
+            .add(params.0.pr, params.0.repo.as_deref(), until)
+            .await
+            .map_err(cli_error)?;
 
         let Some(blocker) = self.pr_watcher.try_block() else {
             return structured(PrWatchResult {

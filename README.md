@@ -229,6 +229,16 @@ remotes, so they keep working while the branch tracks a mirror on another
 forge. Two different GitHub repos (a fork and its upstream) with neither
 current is an error naming both.
 
+Any PR or issue read can name another repo: `?repo=` on the resources
+(`skipper://pr/7289/comments?repo=upstream`, `skipper://issues/open?repo=matz/spinel`)
+and `repo` on `pr_watch`, `pr_merge` and `pr_build_wait`, as a remote name or
+`owner/name`. Skipper never follows GitHub's fork link on its own: it is
+history, not intent (`trailblazer/representable` is a fork of roxml). A PR
+missing from a fork says what the parent is, and the agent picks. A branch's
+PR read on another repo is still the one from this checkout's branch. Every
+read names the `repo` (and `remote`) it came from, so an empty list is never
+mistaken for the wrong repo's answer.
+
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server
 instructions. Other clients get the plain instructions. Claude Code also

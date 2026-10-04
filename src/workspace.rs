@@ -87,6 +87,12 @@ pub enum RemoteError {
          set the branch upstream to one"
     )]
     AmbiguousForge { forge: &'static str, remotes: String },
+
+    #[error("repo={0:?} is neither a remote ({1}) nor owner/name")]
+    BadRepo(String, String),
+
+    #[error("remote {remote} is on {actual}, not {forge}")]
+    WrongForge { remote: String, actual: &'static str, forge: &'static str },
 }
 
 impl From<RemoteError> for crate::error::CliError {
@@ -158,6 +164,70 @@ fn pick_on(forge: &'static str, mut candidates: Vec<ForgeRepo>) -> Result<ForgeR
             remotes: candidates.iter().map(|c| c.remote.as_str()).collect::<Vec<_>>().join(", "),
         }),
     }
+}
+
+/// The repo a read asked for with `repo=`: a remote name, or `owner/name` on
+/// the host of `fallback`. `None` takes `fallback` as is.
+fn select(
+    env: &SkipperEnvironment,
+    spec: Option<&str>,
+    fallback: impl FnOnce() -> Result<ForgeRepo, RemoteError>,
+) -> Result<ForgeRepo, RemoteError> {
+    let Some(spec) = spec.map(str::trim).filter(|s| !s.is_empty()) else {
+        return fallback();
+    };
+    let remotes = crate::git::remotes(env.cwd())?.remotes;
+    if let Some(url) = remotes.get(spec) {
+        let located = crate::remote::host_of(url).zip(crate::remote::repo_path_of(url));
+        let Some((host, (owner, name))) = located else {
+            return Err(RemoteError::NotARepoUrl {
+                remote: spec.to_string(),
+                url: crate::remote::redact_url(url),
+            });
+        };
+        let forge = env.forge_for_url(url).ok_or_else(|| RemoteError::Unmapped {
+            remote: spec.to_string(),
+            host: host.clone(),
+        })?;
+        return Ok(ForgeRepo { remote: spec.to_string(), forge, host, owner, name });
+    }
+    let Some((owner, name)) = owner_name(spec) else {
+        let names: Vec<&str> = remotes.keys().map(String::as_str).collect();
+        return Err(RemoteError::BadRepo(spec.to_string(), names.join(", ")));
+    };
+    let base = fallback()?;
+    Ok(ForgeRepo { remote: String::new(), owner, name, ..base })
+}
+
+/// `owner/name` when `spec` is exactly that: one slash, name characters only.
+pub(crate) fn owner_name(spec: &str) -> Option<(String, String)> {
+    let (owner, name) = spec.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (valid(owner) && valid(name)).then(|| (owner.to_string(), name.to_string()))
+}
+
+/// The repo a read on `forge` goes to: `spec` (a remote name or `owner/name`),
+/// else the current remote when it is on `forge`, else the one repo the
+/// remotes have there.
+pub fn select_on(
+    env: &SkipperEnvironment,
+    forge: &'static str,
+    spec: Option<&str>,
+) -> Result<ForgeRepo, RemoteError> {
+    let repo = select(env, spec, || forge_repo_on(env, forge))?;
+    if repo.forge != forge {
+        return Err(RemoteError::WrongForge { remote: repo.remote, actual: repo.forge, forge });
+    }
+    Ok(repo)
+}
+
+/// The repo a forge-agnostic read (issues) goes to: `spec`, else the current
+/// remote, on whichever forge it is.
+pub fn select_any(env: &SkipperEnvironment, spec: Option<&str>) -> Result<ForgeRepo, RemoteError> {
+    select(env, spec, || forge_repo(env))
 }
 
 pub fn snapshot(env: &SkipperEnvironment) -> Result<Workspace, GitError> {

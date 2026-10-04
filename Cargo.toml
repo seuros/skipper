@@ -20,7 +20,7 @@ serde_json = "1"
 toml = "1.1"
 semver = "1"
 thiserror = "2"
-mcp-host = { version = "0.7.0", features = ["macros"] }
+mcp-host = { version = "0.7.1", features = ["macros"] }
 schemars = "1.2.2"
 jiff = { version = "0.2", features = ["serde"] }
 tracing = "0.1"

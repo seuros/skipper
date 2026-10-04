@@ -10,6 +10,8 @@ use serde::Serialize;
 pub struct PrMergeParams {
     /// PR number (default: the PR belonging to the current branch)
     pr: Option<u64>,
+    /// Repo to read: a remote name or owner/name (default: the current remote)
+    repo: Option<String>,
     /// merge | squash | rebase (default: the repo's default for this account)
     method: Option<String>,
     /// Refuse while checks fail or run (default: true)
@@ -34,12 +36,11 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some() && e.get_custom(\"writes\").is_some()).unwrap_or(false)"
     )]
     async fn pr_merge(&self, ctx: Ctx<'_>, params: Parameters<PrMergeParams>) -> ToolResult {
-        use crate::environment::Environment as _;
-
-        let repo = crate::workspace::forge_repo_on(&self.env, "github")
-            .map_err(|e| cli_error(e.into()))?;
         let gh = GitHubProvider::new();
-        let number = gh.resolve_pr(&repo, params.0.pr, self.env.cwd()).await.map_err(cli_error)?;
+        let (repo, number) = gh
+            .locate_pr(&self.env, params.0.repo.as_deref(), params.0.pr)
+            .await
+            .map_err(cli_error)?;
         let pr = gh.pr_overview(&repo, number).await.map_err(cli_error)?;
         let method = merge_method(&pr, params.0.method.as_deref())?;
 

@@ -8,12 +8,12 @@ use schemars::JsonSchema;
 use semver::Version;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::time::Duration;
 
 mod checks;
 mod client;
 mod discussion;
+mod forks;
 mod issues;
 mod pulls;
 mod runs;
@@ -148,18 +148,6 @@ impl GitHubProvider {
     /// status comes back as `Ok`; only a failure to get a response is an `Err`.
     pub async fn api_get(&self, host: &str, path: &str, etag: Option<&str>) -> Result<ApiResponse> {
         client::get(host, path, etag).await
-    }
-
-    /// `pr`, or the PR of the checked-out branch.
-    pub async fn resolve_pr(&self, repo: &ForgeRepo, pr: Option<u64>, cwd: &Path) -> Result<u64> {
-        if let Some(number) = pr {
-            return Ok(number);
-        }
-        let branch = crate::git::repo_info(cwd)
-            .ok()
-            .and_then(|info| info.branch)
-            .ok_or_else(|| CliError::no_target("detached HEAD; pass the PR number"))?;
-        self.pr_for_branch(repo, &branch).await
     }
 
     pub async fn pr_checks_watch(

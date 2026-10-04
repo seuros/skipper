@@ -16,8 +16,8 @@ pub struct RemoteInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RemoteSource {
-    /// The checked-out branch tracks it.
-    Upstream,
+    /// The checked-out branch tracks it (`branch.<name>.remote`).
+    Tracked,
     /// The repository has no other remote.
     Only,
     /// Several remotes and no upstream: git's default.
@@ -63,7 +63,7 @@ pub(crate) fn pick(
     mut remotes: BTreeMap<String, String>,
 ) -> Option<CurrentRemote> {
     let (name, source) = match upstream.filter(|name| remotes.contains_key(*name)) {
-        Some(name) => (name.to_string(), RemoteSource::Upstream),
+        Some(name) => (name.to_string(), RemoteSource::Tracked),
         None if remotes.len() == 1 => (remotes.keys().next()?.clone(), RemoteSource::Only),
         None if remotes.contains_key("origin") => ("origin".to_string(), RemoteSource::Origin),
         None => return None,

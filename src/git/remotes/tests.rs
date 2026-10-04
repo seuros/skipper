@@ -16,7 +16,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[test]
 fn test_pick_prefers_upstream_over_origin() {
     let current = pick(Some("github"), remotes(&["github", "origin"])).expect("current");
-    assert_eq!((current.name.as_str(), current.source), ("github", RemoteSource::Upstream));
+    assert_eq!((current.name.as_str(), current.source), ("github", RemoteSource::Tracked));
     assert_eq!(current.url, "https://example.com/github/repo.git");
 }
 
@@ -48,5 +48,5 @@ fn test_current_follows_branch_upstream_switch() {
 
     git(dir, &["config", "branch.main.remote", "github"]);
     let current = super::current(dir).expect("read").expect("current");
-    assert_eq!((current.name.as_str(), current.source), ("github", RemoteSource::Upstream));
+    assert_eq!((current.name.as_str(), current.source), ("github", RemoteSource::Tracked));
 }

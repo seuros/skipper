@@ -204,6 +204,8 @@ pub struct WatchView {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct WatchedView {
     pub pr: u64,
+    /// owner/name the PR is on.
+    pub repo: String,
     pub until: Vec<EventKind>,
     /// Null until the first poll lands.
     pub status: Option<PrSnapshot>,
@@ -216,6 +218,7 @@ pub struct WatchedView {
 }
 
 struct Watched {
+    repo: String,
     /// Taken by the poller while a poll is in flight.
     source: Option<GithubPr>,
     until: BTreeSet<EventKind>,
@@ -246,8 +249,8 @@ pub struct PrWatcher {
     inbox_version: watch::Sender<u64>,
     blocking: AtomicBool,
     budget: ApiBudget,
-    /// PR per `owner/repo:branch`, asked of GitHub once.
-    branch_prs: Mutex<HashMap<String, u64>>,
+    /// The checked-out branch's PR per `repo:branch`, asked of GitHub once.
+    branch_prs: Mutex<HashMap<String, (crate::workspace::ForgeRepo, u64)>>,
 }
 
 impl PrWatcher {
@@ -269,13 +272,14 @@ impl PrWatcher {
     pub async fn add(
         self: &Arc<Self>,
         pr: Option<u64>,
+        repo: Option<&str>,
         until: BTreeSet<EventKind>,
     ) -> Result<(u64, bool)> {
-        let repo = crate::workspace::forge_repo_on(&self.env, "github")?;
-        let number = match pr {
-            Some(number) => number,
-            None => self.branch_pr(&repo).await?,
+        let (repo, number) = match pr {
+            Some(number) => self.gh.locate_pr(&self.env, repo, Some(number)).await?,
+            None => self.branch_pr(repo).await?,
         };
+        let full_name = repo.full_name();
         let pr = PrRef { host: repo.host, owner: repo.owner, repo: repo.name, number };
 
         let (added, spawn) = {
@@ -287,7 +291,7 @@ impl PrWatcher {
                     false
                 }
                 None => {
-                    state.prs.insert(number, Watched::new(GithubPr::new(pr), until));
+                    state.prs.insert(number, Watched::new(full_name, GithubPr::new(pr), until));
                     true
                 }
             };
@@ -329,6 +333,7 @@ impl PrWatcher {
                 .iter()
                 .map(|(pr, w)| WatchedView {
                     pr: *pr,
+                    repo: w.repo.clone(),
                     until: w.until.iter().copied().collect(),
                     status: w.status.clone(),
                     recent: w.recent.iter().cloned().collect(),
@@ -439,20 +444,20 @@ impl PrWatcher {
         }
     }
 
-    /// The PR of the checked-out branch in `repo`.
-    async fn branch_pr(&self, repo: &crate::workspace::ForgeRepo) -> Result<u64> {
+    /// The repo and number of the checked-out branch's PR in `repo`.
+    async fn branch_pr(&self, repo: Option<&str>) -> Result<(crate::workspace::ForgeRepo, u64)> {
         let branch = crate::git::repo_info(self.env.cwd())
             .ok()
             .and_then(|info| info.branch)
             .ok_or_else(|| CliError::no_target("detached HEAD; pass `pr`"))?;
-        let key = format!("{}:{branch}", repo.full_name());
-        if let Some(number) = self.branch_prs.lock().expect("branch cache lock").get(&key) {
-            return Ok(*number);
+        let key = format!("{}:{branch}", repo.unwrap_or_default());
+        if let Some(found) = self.branch_prs.lock().expect("branch cache lock").get(&key) {
+            return Ok(found.clone());
         }
 
-        let number = self.gh.pr_for_branch(repo, &branch).await?;
-        self.branch_prs.lock().expect("branch cache lock").insert(key, number);
-        Ok(number)
+        let found = self.gh.locate_pr(&self.env, repo, None).await?;
+        self.branch_prs.lock().expect("branch cache lock").insert(key, found.clone());
+        Ok(found)
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -461,8 +466,9 @@ impl PrWatcher {
 }
 
 impl Watched {
-    fn new(source: GithubPr, until: BTreeSet<EventKind>) -> Self {
+    fn new(repo: String, source: GithubPr, until: BTreeSet<EventKind>) -> Self {
         Self {
+            repo,
             source: Some(source),
             until,
             status: None,
