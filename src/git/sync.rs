@@ -134,7 +134,72 @@ pub(crate) fn checked_ref(name: &str) -> Result<String, GitError> {
     Ok(name.to_string())
 }
 
+/// Git's words for a network that dropped, not a request that failed:
+/// worth another try. A rejected push or a refused login is not.
+const TRANSIENT: &[&str] = &[
+    "connection reset",
+    "connection refused",
+    "connection timed out",
+    "operation timed out",
+    "could not resolve host",
+    "temporary failure in name resolution",
+    "failed to connect",
+    "couldn't connect to server",
+    "the remote end hung up unexpectedly",
+    "connection closed by remote host",
+    "kex_exchange_identification",
+    "early eof",
+    "rpc failed",
+    "ssl_error_syscall",
+    "gnutls_handshake",
+    "the requested url returned error: 50",
+];
+
+pub(crate) fn transient(output: &str) -> bool {
+    let output = output.to_lowercase();
+    TRANSIENT.iter().any(|marker| output.contains(marker))
+}
+
+enum Attempt {
+    Transient(SyncOutcome),
+    Failed(GitError),
+}
+
+/// `git args`, tried up to three times (~1s doubling, jittered) while it
+/// fails on the network. Fetch, fast-forward pull and push of the same refs
+/// are all safe to repeat. A timeout is not retried: its wait is long already.
 async fn run(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome, GitError> {
+    use chrono_machines::{AsyncRetryable, ExponentialBackoff, RetryOutcome};
+
+    let backoff = ExponentialBackoff::new()
+        .base_delay_ms(1_000)
+        .multiplier(2.0)
+        .max_delay_ms(4_000)
+        .max_attempts(3)
+        .jitter_factor(0.5);
+    let attempt = || async {
+        match run_once(cwd, remote, args).await {
+            Ok(outcome) if !outcome.ok && transient(&outcome.output) => {
+                Err(Attempt::Transient(outcome))
+            }
+            Ok(outcome) => Ok(outcome),
+            Err(e) => Err(Attempt::Failed(e)),
+        }
+    };
+    let result = attempt
+        .retry_async(backoff)
+        .when(|a: &Attempt| matches!(a, Attempt::Transient(_)))
+        .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
+        .await
+        .map(RetryOutcome::into_inner)
+        .map_err(|e| e.into_cause().expect("a failed retry carries its last error"));
+    match result {
+        Ok(outcome) | Err(Attempt::Transient(outcome)) => Ok(outcome),
+        Err(Attempt::Failed(e)) => Err(e),
+    }
+}
+
+async fn run_once(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome, GitError> {
     let envs = [("GIT_TERMINAL_PROMPT", "0")];
     let output = crate::executor::execute_in("git", args, cwd, &envs, TIMEOUT)
         .await
