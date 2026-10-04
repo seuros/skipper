@@ -68,6 +68,6 @@ fn test_overview_lists_allowed_methods_and_cleans_body() {
     assert_eq!(overview.merge_methods, ["squash", "rebase"]);
     assert_eq!(overview.default_method, "squash");
     assert_eq!((overview.state.as_str(), overview.merge_state.as_str()), ("open", "clean"));
-    assert_eq!((overview.author.as_str(), overview.body.as_str()), ("ghost", "Notes"));
+    assert_eq!((overview.author.as_str(), overview.body.as_str()), ("ghost", "Notes\nlog"));
     assert_eq!(overview.files[0].change, "modified");
 }

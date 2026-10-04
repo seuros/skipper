@@ -1,9 +1,12 @@
 use super::*;
 
 #[test]
-fn test_readable_drops_details_and_html_comments() {
-    let body = "_Minor_\n\n<details>\n<summary>x</summary>\n\n<details>inner</details>\nstill hidden\n</details>\n\n\n**Check the allocation.**\n<!-- fingerprint -->\n\nKeep this.\n";
-    assert_eq!(readable(body), "_Minor_\n\n**Check the allocation.**\n\nKeep this.");
+fn test_readable_opens_details_and_drops_html_comments() {
+    let body = "_Minor_\n\n<details>\n<summary>Suggested fix</summary>\n\n<details open>nested</details>\nfix\n</details>\n\n\n**Check the allocation.**\n<!-- fingerprint -->\n\nKeep this.\n";
+    assert_eq!(
+        readable(body),
+        "_Minor_\n\nSuggested fix\n\nnested\nfix\n\n**Check the allocation.**\n\nKeep this."
+    );
     assert_eq!(readable("<!-- open"), "");
 }
 

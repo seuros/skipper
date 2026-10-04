@@ -5,28 +5,19 @@
 #[cfg(feature = "github")]
 pub(crate) const EVENT_BODY_LIMIT: usize = 1500;
 
-/// `body` without HTML comments, collapsed `<details>`, inline markup tags or
-/// alert banners, blank runs squeezed. Never cut: what remains is the text a
-/// reader acts on.
+/// `body` without HTML comments, markup tags or alert banners, blank runs
+/// squeezed. Collapsed `<details>` open up: the summary stays as a line, the
+/// content as written. Never cut: what remains is the text a reader acts on.
 pub(crate) fn readable(body: &str) -> String {
     let mut kept = String::with_capacity(body.len());
-    let mut depth = 0usize;
     let mut rest = body;
     while let Some(ch) = rest.chars().next() {
         if rest.starts_with("<!--") {
             rest = rest.find("-->").map_or("", |end| &rest[end + 3..]);
-        } else if rest.starts_with("<details") {
-            depth += 1;
-            rest = &rest["<details".len()..];
-        } else if rest.starts_with("</details>") {
-            depth = depth.saturating_sub(1);
-            rest = &rest["</details>".len()..];
         } else if let Some(len) = html_tag_len(rest) {
             rest = &rest[len..];
         } else {
-            if depth == 0 {
-                kept.push(ch);
-            }
+            kept.push(ch);
             rest = &rest[ch.len_utf8()..];
         }
     }
@@ -37,6 +28,9 @@ pub(crate) fn readable(body: &str) -> String {
             continue;
         }
         lines.push(line);
+    }
+    while lines.last().is_some_and(|l| matches!(l.trim(), "" | "---")) {
+        lines.pop();
     }
     lines.join("\n").trim().to_string()
 }
@@ -51,9 +45,9 @@ pub(crate) fn clip(text: String, limit: usize) -> String {
 }
 
 fn html_tag_len(rest: &str) -> Option<usize> {
-    const TAGS: [&str; 16] = [
+    const TAGS: [&str; 17] = [
         "a", "img", "sub", "sup", "br", "p", "div", "span", "b", "i", "strong", "em", "summary",
-        "picture", "source", "hr",
+        "details", "picture", "source", "hr",
     ];
     let inner = rest.strip_prefix('<')?;
     let name = inner.strip_prefix('/').unwrap_or(inner);
