@@ -47,6 +47,7 @@ pub use remotes::RemoteSource;
 pub use repo::RepoInfo;
 pub use show::CommitTrailer;
 pub use show::ShowEntry;
+pub use show::commit_id;
 pub use show::show;
 pub use status::FileStatus;
 pub use status::StatusInfo;

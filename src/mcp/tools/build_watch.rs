@@ -1,5 +1,6 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
+    mcp_tool,
 };
 use crate::provider::BuildRun;
 use mcp_host::prelude::structured;
@@ -13,6 +14,9 @@ pub struct BuildWatchParams {
     provider: Option<String>,
     /// Run/pipeline id to watch (default: the latest run for the current branch)
     run_id: Option<String>,
+    /// Watch every run of this commit instead (a sha, HEAD, a branch); returns
+    /// once all have finished
+    commit: Option<String>,
     /// Give up after this many seconds and return the current status
     /// (default: 60, clamped to 10..=300)
     wait_secs: Option<u64>,
@@ -22,10 +26,20 @@ pub struct BuildWatchParams {
 
 #[derive(Serialize, JsonSchema)]
 pub struct BuildWatchResult {
-    pub run: BuildRun,
+    /// The watched run (run mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<BuildRun>,
+    /// Commit mode: the commit's full sha and every run of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runs: Option<Vec<BuildRun>>,
+    /// Commit mode: failure | cancelled | pending | success | no_runs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conclusion: Option<&'static str>,
     /// The status differs from when this call started.
     pub changed: bool,
-    /// The run has finished; calling again would return the same thing.
+    /// Finished (every run, in commit mode); calling again returns the same.
     pub terminal: bool,
     pub waited_secs: u64,
 }
@@ -33,7 +47,7 @@ pub struct BuildWatchResult {
 impl SkipperServer {
     #[mcp_tool(
         name = "build_watch",
-        description = "Wait for a CI run's status to change, up to wait_secs. Returns the status either way; call again while terminal is false",
+        description = "Wait for a CI run's status to change, or with commit= for every run of a commit to finish, up to wait_secs. Returns the status either way; call again while terminal is false",
         task_support = "optional",
         output = "BuildWatchResult",
         read_only = true,
@@ -41,24 +55,28 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:gitlab\").is_some())).unwrap_or(false)"
     )]
     async fn build_watch(&self, _ctx: Ctx<'_>, params: Parameters<BuildWatchParams>) -> ToolResult {
-        let provider = self.ci_provider(params.0.provider.as_deref())?;
-        let initial =
-            provider.ci_run(&self.env, params.0.run_id.as_deref()).await.map_err(cli_error)?;
+        let params = params.0;
+        let provider = self.ci_provider(params.provider.as_deref())?;
+        let wait = Duration::from_secs(params.wait_secs.unwrap_or(60).clamp(10, 300));
+        let interval = Duration::from_secs(params.poll_secs.unwrap_or(10).clamp(5, 60));
 
-        if initial.is_terminal() {
-            return structured(BuildWatchResult {
-                terminal: true,
-                changed: false,
-                waited_secs: 0,
-                run: initial,
-            });
+        if let Some(rev) = params.commit {
+            if params.run_id.is_some() {
+                return Err(ToolError::InvalidArguments(
+                    "pass run_id or commit, not both".to_string(),
+                ));
+            }
+            return self.watch_commit(provider.as_ref(), &rev, wait, interval).await;
         }
 
-        let wait = Duration::from_secs(params.0.wait_secs.unwrap_or(60).clamp(10, 300));
-        let interval = Duration::from_secs(params.0.poll_secs.unwrap_or(10).clamp(5, 60));
+        let initial =
+            provider.ci_run(&self.env, params.run_id.as_deref()).await.map_err(cli_error)?;
+        if initial.is_terminal() {
+            return structured(BuildWatchResult::run(initial, false, 0));
+        }
+
         let start = Instant::now();
         let deadline = start + wait;
-
         let mut current = initial.clone();
         while Instant::now() < deadline {
             let remaining = deadline - Instant::now();
@@ -70,11 +88,60 @@ impl SkipperServer {
             }
         }
 
+        let changed = current.status != initial.status;
+        structured(BuildWatchResult::run(current, changed, start.elapsed().as_secs()))
+    }
+
+    /// Poll every run of `rev`'s commit until all have finished or `wait` ends.
+    /// Runs registering late (right after a push) are picked up as they come.
+    async fn watch_commit(
+        &self,
+        provider: &dyn crate::provider::Provider,
+        rev: &str,
+        wait: Duration,
+        interval: Duration,
+    ) -> ToolResult {
+        use crate::environment::Environment as _;
+
+        let sha = crate::git::commit_id(self.env.cwd(), rev)
+            .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        let start = Instant::now();
+        let deadline = start + wait;
+
+        let initial = provider.ci_runs_for_commit(&self.env, &sha).await.map_err(cli_error)?;
+        let mut runs = initial.clone();
+        while !all_finished(&runs) && Instant::now() < deadline {
+            let remaining = deadline - Instant::now();
+            tokio::time::sleep(interval.min(remaining)).await;
+            runs = provider.ci_runs_for_commit(&self.env, &sha).await.map_err(cli_error)?;
+        }
+
         structured(BuildWatchResult {
-            changed: current.status != initial.status,
-            terminal: current.is_terminal(),
+            run: None,
+            changed: runs != initial,
+            terminal: all_finished(&runs),
+            conclusion: Some(crate::provider::conclusion_of(&runs)),
+            commit: Some(sha),
+            runs: Some(runs),
             waited_secs: start.elapsed().as_secs(),
-            run: current,
         })
     }
+}
+
+impl BuildWatchResult {
+    fn run(run: BuildRun, changed: bool, waited_secs: u64) -> Self {
+        Self {
+            terminal: run.is_terminal(),
+            run: Some(run),
+            commit: None,
+            runs: None,
+            conclusion: None,
+            changed,
+            waited_secs,
+        }
+    }
+}
+
+fn all_finished(runs: &[BuildRun]) -> bool {
+    !runs.is_empty() && runs.iter().all(BuildRun::is_terminal)
 }

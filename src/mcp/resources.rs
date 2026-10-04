@@ -79,6 +79,26 @@ impl SkipperServer {
 
     #[cfg(feature = "github")]
     #[mcp_resource_template(
+        uri_template = "skipper://pr/{number}",
+        name = "pr",
+        title = "PR overview",
+        description = "GitHub PR: title, state, draft, author, head, base, head_sha, mergeable, merge_state, review, merge_methods, default_method, labels, files, body. number=current: this branch's PR",
+        mime_type = "application/json"
+    )]
+    pub(crate) async fn pr(&self, ctx: Ctx<'_>) -> ResourceResult {
+        use crate::environment::Environment as _;
+        use crate::provider::github::GitHubProvider;
+
+        let (number, pr) = pr_param(&ctx)?;
+        let repo = github_repo(&self.env)?;
+        let gh = GitHubProvider::new();
+        let pr = gh.resolve_pr(&repo, pr, self.env.cwd()).await.map_err(forge_error)?;
+        let overview = gh.pr_overview(&repo, pr).await.map_err(forge_error)?;
+        json_resource(format!("skipper://pr/{number}"), &overview)
+    }
+
+    #[cfg(feature = "github")]
+    #[mcp_resource_template(
         uri_template = "skipper://pr/{number}/checks",
         name = "pr_checks",
         title = "PR check matrix",

@@ -28,6 +28,22 @@ impl GitHubProvider {
         Ok(runs.workflow_runs.into_iter().map(Into::into).collect())
     }
 
+    /// Every workflow run of commit `sha`.
+    pub async fn commit_runs(&self, repo: &ForgeRepo, sha: &str) -> Result<Vec<BuildRun>> {
+        #[derive(Deserialize)]
+        struct Runs {
+            workflow_runs: Vec<WorkflowRun>,
+        }
+        let path = format!(
+            "{}/actions/runs?head_sha={}&per_page={}",
+            repo_path(repo),
+            urlencoding::encode(sha),
+            super::PAGE
+        );
+        let runs: Runs = self.api_json_at(&repo.host, &path).await?;
+        Ok(runs.workflow_runs.into_iter().map(Into::into).collect())
+    }
+
     pub async fn run(&self, repo: &ForgeRepo, id: &str) -> Result<BuildRun> {
         let path = format!("{}/actions/runs/{}", repo_path(repo), urlencoding::encode(id));
         let run: WorkflowRun = self.api_json_at(&repo.host, &path).await?;

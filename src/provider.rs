@@ -78,6 +78,23 @@ pub fn is_terminal_status(status: &str) -> bool {
     matches!(status, "success" | "failure" | "cancelled" | "skipped" | "completed")
 }
 
+/// One verdict for a set of runs, with the precedence PR checks use:
+/// failure, then cancelled, then pending, else success. `no_runs` while none
+/// has registered.
+pub fn conclusion_of(runs: &[BuildRun]) -> &'static str {
+    if runs.is_empty() {
+        "no_runs"
+    } else if runs.iter().any(|r| r.status == "failure") {
+        "failure"
+    } else if runs.iter().any(|r| r.status == "cancelled") {
+        "cancelled"
+    } else if runs.iter().any(|r| !r.is_terminal()) {
+        "pending"
+    } else {
+        "success"
+    }
+}
+
 /// `auth status` exits non-zero for a failed network round-trip too; these
 /// markers separate that from a missing or rejected login.
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
@@ -215,6 +232,15 @@ pub trait Provider: Send + Sync {
         _limit: usize,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI run listing")) })
+    }
+
+    /// Every run of commit `sha` (full id), newest first.
+    fn ci_runs_for_commit<'a>(
+        &'a self,
+        _env: &'a crate::environment::SkipperEnvironment,
+        _sha: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
+        Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI runs by commit")) })
     }
 
     /// Run `id`, or the latest run of the current branch.

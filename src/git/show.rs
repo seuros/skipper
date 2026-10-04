@@ -29,6 +29,20 @@ pub struct ShowEntry {
     pub trailers: Vec<CommitTrailer>,
 }
 
+/// The full id of the commit `rev` names (`HEAD`, a branch, a short sha).
+pub fn commit_id(cwd: &Path, rev: &str) -> Result<String, GitError> {
+    let repo = open_repo(cwd)?;
+    let id = repo
+        .rev_parse_single(rev)
+        .map_err(|e| GitError::RefNotFound(format!("{rev}: {e:#}")))?
+        .object()
+        .git_op()?
+        .peel_to_commit()
+        .git_op()?
+        .id;
+    Ok(id.to_string())
+}
+
 pub fn show(cwd: &Path, rev: Option<&str>) -> Result<ShowEntry, GitError> {
     let repo = open_repo(cwd)?;
     let rev = rev.unwrap_or("HEAD");

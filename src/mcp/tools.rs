@@ -198,6 +198,7 @@ pub fn router() -> McpRouter<SkipperServer> {
     #[cfg(feature = "github")]
     {
         templates = templates
+            .with_template(SkipperServer::pr_template_info(), SkipperServer::pr_handler, None)
             .with_template(
                 SkipperServer::pr_checks_template_info(),
                 SkipperServer::pr_checks_handler,

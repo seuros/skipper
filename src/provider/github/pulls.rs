@@ -1,6 +1,7 @@
 //! Pull requests over GraphQL: the PR of a branch, and PR listings.
 
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::{GitHubProvider, PrState};
 use crate::error::{CliError, Result};
@@ -10,6 +11,20 @@ const BRANCH_QUERY: &str = r"query($owner: String!, $name: String!, $branch: Str
   repository(owner: $owner, name: $name) {
     pullRequests(headRefName: $branch, first: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes { number state headRepositoryOwner { login } }
+    }
+  }
+}";
+
+const OVERVIEW_QUERY: &str = r"query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerDefaultMergeMethod
+    pullRequest(number: $number) {
+      number title state isDraft createdAt updatedAt mergedAt body
+      author { login } headRefName baseRefName headRefOid
+      mergeable mergeStateStatus reviewDecision
+      additions deletions changedFiles
+      labels(first: 20) { nodes { name } }
+      files(first: 100) { nodes { path additions deletions changeType } }
     }
   }
 }";
@@ -50,6 +65,21 @@ impl GitHubProvider {
         })
     }
 
+    /// What deciding on a merge takes: state, mergeability, review, allowed
+    /// merge methods, labels, files and the body.
+    pub async fn pr_overview(&self, repo: &ForgeRepo, number: u64) -> Result<PrOverview> {
+        let variables =
+            serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let data: OverviewData = self.graphql(&repo.host, OVERVIEW_QUERY, variables).await?;
+        let mut repository = data
+            .repository
+            .ok_or_else(|| CliError::no_target(format!("no repository {}", repo.full_name())))?;
+        let pull = repository.pull_request.take().ok_or_else(|| {
+            CliError::no_target(format!("no pull request #{number} in {}", repo.full_name()))
+        })?;
+        Ok(pull.into_overview(&repository))
+    }
+
     /// The 30 newest PRs of `repo` in `state` (open | closed | merged | all) by
     /// `author` (a login, or `me`).
     pub async fn pr_list(
@@ -87,6 +117,159 @@ impl GitHubProvider {
                 merged_at: l.merged_at,
             })
             .collect())
+    }
+}
+
+/// A PR as needed to decide on merging it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PrOverview {
+    pub pr: u64,
+    pub title: String,
+    /// open | closed | merged
+    pub state: String,
+    pub draft: bool,
+    pub author: String,
+    pub head: String,
+    pub base: String,
+    pub head_sha: String,
+    /// mergeable | conflicting | unknown
+    pub mergeable: String,
+    /// clean | blocked | behind | dirty | unstable | draft | has_hooks | unknown
+    pub merge_state: String,
+    /// approved | changes_requested | review_required; absent without review rules
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<String>,
+    /// Methods the repo allows: merge | squash | rebase
+    pub merge_methods: Vec<String>,
+    /// GitHub's default method for this viewer
+    pub default_method: String,
+    pub labels: Vec<String>,
+    pub additions: u64,
+    pub deletions: u64,
+    /// Total changed files; `files` lists the first 100.
+    pub changed_files: u64,
+    pub files: Vec<PrFile>,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merged_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PrFile {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+    /// added | deleted | modified | renamed | copied | changed
+    pub change: String,
+}
+
+#[derive(Deserialize)]
+struct OverviewData {
+    repository: Option<OverviewRepo>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OverviewRepo {
+    merge_commit_allowed: bool,
+    squash_merge_allowed: bool,
+    rebase_merge_allowed: bool,
+    viewer_default_merge_method: String,
+    pull_request: Option<OverviewPull>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OverviewPull {
+    number: u64,
+    title: String,
+    state: String,
+    is_draft: bool,
+    created_at: String,
+    updated_at: String,
+    merged_at: Option<String>,
+    body: String,
+    author: Option<super::User>,
+    head_ref_name: String,
+    base_ref_name: String,
+    head_ref_oid: String,
+    mergeable: String,
+    merge_state_status: String,
+    review_decision: Option<String>,
+    additions: u64,
+    deletions: u64,
+    changed_files: u64,
+    labels: Option<Nodes<Label>>,
+    files: Option<Nodes<FileNode>>,
+}
+
+#[derive(Deserialize)]
+struct Label {
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileNode {
+    path: String,
+    additions: u64,
+    deletions: u64,
+    change_type: String,
+}
+
+impl OverviewPull {
+    fn into_overview(self, repo: &OverviewRepo) -> PrOverview {
+        let allowed = [
+            ("merge", repo.merge_commit_allowed),
+            ("squash", repo.squash_merge_allowed),
+            ("rebase", repo.rebase_merge_allowed),
+        ];
+        PrOverview {
+            pr: self.number,
+            title: self.title,
+            state: self.state.to_lowercase(),
+            draft: self.is_draft,
+            author: super::login(self.author),
+            head: self.head_ref_name,
+            base: self.base_ref_name,
+            head_sha: self.head_ref_oid,
+            mergeable: self.mergeable.to_lowercase(),
+            merge_state: self.merge_state_status.to_lowercase(),
+            review: self.review_decision.map(|r| r.to_lowercase()),
+            merge_methods: allowed
+                .iter()
+                .filter(|(_, on)| *on)
+                .map(|(method, _)| (*method).to_string())
+                .collect(),
+            default_method: repo.viewer_default_merge_method.to_lowercase(),
+            labels: self
+                .labels
+                .map(|l| l.nodes.into_iter().map(|l| l.name).collect())
+                .unwrap_or_default(),
+            additions: self.additions,
+            deletions: self.deletions,
+            changed_files: self.changed_files,
+            files: self
+                .files
+                .map(|f| {
+                    f.nodes
+                        .into_iter()
+                        .map(|f| PrFile {
+                            path: f.path,
+                            additions: f.additions,
+                            deletions: f.deletions,
+                            change: f.change_type.to_lowercase(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            body: crate::provider::text::readable(&self.body),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            merged_at: self.merged_at,
+        }
     }
 }
 

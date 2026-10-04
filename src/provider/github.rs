@@ -21,6 +21,7 @@ mod runs;
 pub use client::ApiResponse;
 pub use discussion::{PrDiscussion, PrNote};
 pub(crate) use discussion::{User, login};
+pub use pulls::{PrFile, PrOverview};
 pub use runs::OwnedRepo;
 
 #[derive(Deserialize)]
@@ -107,6 +108,17 @@ impl Provider for GitHubProvider {
         Box::pin(async move {
             let repo = crate::workspace::forge_repo_on(env, "github")?;
             self.runs(&repo, None, limit).await
+        })
+    }
+
+    fn ci_runs_for_commit<'a>(
+        &'a self,
+        env: &'a SkipperEnvironment,
+        sha: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
+        Box::pin(async move {
+            let repo = crate::workspace::forge_repo_on(env, "github")?;
+            self.commit_runs(&repo, sha).await
         })
     }
 

@@ -66,3 +66,20 @@ async fn test_unreachable_provider_recovers_through_retry() {
     assert_eq!(*online.lock().unwrap(), ["flaky"]);
     assert!(registry.is_enabled("flaky"));
 }
+
+#[test]
+fn test_conclusion_of_runs() {
+    let run = |status: &str| BuildRun {
+        id: "1".into(),
+        status: status.into(),
+        branch: None,
+        workflow: None,
+        title: None,
+        url: None,
+    };
+    assert_eq!(conclusion_of(&[]), "no_runs");
+    assert_eq!(conclusion_of(&[run("success"), run("skipped"), run("completed")]), "success");
+    assert_eq!(conclusion_of(&[run("success"), run("running")]), "pending");
+    assert_eq!(conclusion_of(&[run("cancelled"), run("queued")]), "cancelled");
+    assert_eq!(conclusion_of(&[run("cancelled"), run("failure"), run("running")]), "failure");
+}
