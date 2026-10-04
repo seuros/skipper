@@ -133,7 +133,7 @@ pub(crate) fn diff_report_with_cancel(
         .ok_or_else(|| GitError::Operation("repository has no worktree".to_string()))?;
     let index = repo
         .index_or_load_from_head_or_empty()
-        .map_err(|e| GitError::Operation(e.to_string()))?
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?
         .into_owned();
 
     let base_tree = match scope {
@@ -249,7 +249,7 @@ fn resolve_base_tree<'repo>(
     }
 
     repo.rev_parse_single(base_spec)
-        .map_err(|e| GitError::RefNotFound(format!("{base_spec}: {e}")))?
+        .map_err(|e| GitError::RefNotFound(format!("{base_spec}: {e:#}")))?
         .object()
         .git_op()?
         .peel_to_tree()

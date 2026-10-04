@@ -11,23 +11,22 @@ fn test_github_provider_config() {
 #[test]
 fn test_workflow_run_normalization() {
     let json = r#"[
-        {"databaseId": 42, "status": "completed", "conclusion": "success",
-         "headBranch": "master", "workflowName": "CI", "displayTitle": "fix: thing",
-         "url": "https://github.com/o/r/actions/runs/42"},
-        {"databaseId": 43, "status": "in_progress", "conclusion": null,
-         "headBranch": "master", "workflowName": "CI", "displayTitle": "wip",
-         "url": null},
-        {"databaseId": 44, "status": "queued", "conclusion": null,
-         "headBranch": null, "workflowName": null, "displayTitle": null, "url": null},
-        {"databaseId": 45, "status": "completed", "conclusion": "neutral",
-         "headBranch": null, "workflowName": null, "displayTitle": null, "url": null}
+        {"id": 42, "status": "completed", "conclusion": "success", "head_branch": "master",
+         "name": "CI", "display_title": "fix: thing",
+         "html_url": "https://github.com/o/r/actions/runs/42"},
+        {"id": 43, "status": "in_progress", "conclusion": null, "head_branch": "master",
+         "name": "CI", "display_title": "wip", "html_url": null},
+        {"id": 44, "status": "queued", "conclusion": null, "head_branch": null,
+         "name": null, "display_title": null, "html_url": null},
+        {"id": 45, "status": "completed", "conclusion": "neutral", "head_branch": null,
+         "name": null, "display_title": null, "html_url": null}
     ]"#;
-    let runs: Vec<WorkflowRun> = serde_json::from_str(json).unwrap();
+    let runs: Vec<runs::WorkflowRun> = serde_json::from_str(json).unwrap();
     let runs: Vec<BuildRun> = runs.into_iter().map(Into::into).collect();
 
-    assert_eq!(runs[0].status, "success");
+    assert_eq!((runs[0].status.as_str(), runs[0].id.as_str()), ("success", "42"));
+    assert_eq!(runs[0].workflow.as_deref(), Some("CI"));
     assert!(runs[0].is_terminal());
-    assert_eq!(runs[0].id, "42");
     assert_eq!(runs[1].status, "running");
     assert!(!runs[1].is_terminal());
     assert_eq!(runs[2].status, "queued");
@@ -36,36 +35,32 @@ fn test_workflow_run_normalization() {
 }
 
 #[test]
-fn test_pr_check_parsing_and_tally() {
-    let json = r#"[
-        {"bucket": "pass", "name": "test (ubuntu-latest, stable)", "workflow": "CI",
-         "state": "SUCCESS", "startedAt": "2026-09-22T10:00:00Z",
-         "completedAt": "2026-09-22T10:05:00Z",
-         "link": "https://github.com/o/r/actions/runs/1/job/11",
-         "description": "", "event": "pull_request"},
-        {"bucket": "fail", "name": "test (macos-latest, stable)", "workflow": "CI",
-         "state": "FAILURE", "startedAt": "2026-09-22T10:00:00Z",
-         "completedAt": "2026-09-22T10:07:00Z",
-         "link": "https://github.com/o/r/actions/runs/1/job/12",
-         "description": "", "event": "pull_request"},
-        {"bucket": "pending", "name": "clippy", "workflow": "Lint",
-         "state": "IN_PROGRESS", "startedAt": "2026-09-22T10:00:00Z",
-         "completedAt": null, "link": null, "description": null, "event": null},
-        {"bucket": "skipping", "name": "docs", "workflow": "Docs",
-         "state": "SKIPPED", "startedAt": null, "completedAt": null,
-         "link": null, "description": null, "event": null},
-        {"bucket": "pass", "name": "codecov", "workflow": "",
-         "state": "SUCCESS", "startedAt": null, "completedAt": null,
-         "link": "https://codecov.io/gh/o/r", "description": "92% coverage",
-         "event": null}
-    ]"#;
-    let checks: Vec<PrCheck> = serde_json::from_str(json).unwrap();
-    assert_eq!(checks.len(), 5);
-    assert_eq!(checks[4].workflow, "", "commit statuses have no workflow");
-
+fn test_check_tally() {
+    let checks = [
+        check("test (ubuntu)", "pass"),
+        check("test (macos)", "fail"),
+        check("clippy", "pending"),
+        check("docs", "skipping"),
+        check("codecov", "pass"),
+    ];
     let counts = CheckCounts::tally(&checks);
     assert_eq!(counts, CheckCounts { pass: 2, fail: 1, pending: 1, skipped: 1, cancelled: 0 });
     assert_eq!(counts.conclusion(), "failure");
+}
+
+#[test]
+fn test_buckets_match_gh_for_rest_and_graphql_values() {
+    assert_eq!(run_bucket("completed", Some("success")), "pass");
+    assert_eq!(run_bucket("COMPLETED", Some("NEUTRAL")), "skipping");
+    assert_eq!(run_bucket("COMPLETED", Some("SKIPPED")), "skipping");
+    assert_eq!(run_bucket("completed", Some("cancelled")), "cancel");
+    assert_eq!(run_bucket("COMPLETED", Some("STARTUP_FAILURE")), "fail");
+    assert_eq!(run_bucket("completed", Some("action_required")), "fail");
+    assert_eq!(run_bucket("COMPLETED", Some("STALE")), "pending");
+    assert_eq!(run_bucket("IN_PROGRESS", None), "pending");
+    assert_eq!(status_bucket("SUCCESS"), "pass");
+    assert_eq!(status_bucket("expected"), "pending");
+    assert_eq!(status_bucket("ERROR"), "fail");
 }
 
 #[test]
@@ -88,28 +83,6 @@ fn test_check_counts_conclusion_precedence() {
 }
 
 #[test]
-fn test_empty_check_fields_are_absent() {
-    let json = r#"[
-        {"bucket": "pending", "name": "slow", "workflow": "CI",
-         "link": "https://github.com/o/r/actions/runs/1/job/11", "description": ""},
-        {"bucket": "pass", "name": "codecov", "workflow": "",
-         "link": "", "description": "92% coverage"}
-    ]"#;
-    let checks: Vec<PrCheck> = serde_json::from_str(json).unwrap();
-    assert_eq!(checks[0].description, None);
-    assert_eq!(checks[1].link, None);
-
-    assert_eq!(
-        serde_json::to_value(&checks).unwrap(),
-        serde_json::json!([
-            {"name": "slow", "bucket": "pending", "workflow": "CI",
-             "link": "https://github.com/o/r/actions/runs/1/job/11"},
-            {"name": "codecov", "bucket": "pass", "description": "92% coverage"}
-        ])
-    );
-}
-
-#[test]
 fn test_watch_termination_conditions() {
     let running = CheckCounts { pass: 2, pending: 2, ..Default::default() };
     assert_eq!(running.pending, 2, "still running: keep polling");
@@ -129,13 +102,7 @@ fn test_no_checks_is_distinct_from_success() {
     assert_eq!(none.total(), 0);
     assert_eq!(none.conclusion(), "no_checks");
 
-    let json = r#"[
-        {"bucket": "pass", "name": "lint", "workflow": "CI", "state": "SUCCESS",
-         "startedAt": null, "completedAt": null, "link": null,
-         "description": null, "event": null}
-    ]"#;
-    let checks: Vec<PrCheck> = serde_json::from_str(json).unwrap();
-    assert_eq!(CheckCounts::tally(&checks).conclusion(), "success");
+    assert_eq!(CheckCounts::tally(&[check("lint", "pass")]).conclusion(), "success");
 }
 
 #[test]
@@ -151,17 +118,15 @@ fn test_auth_network_failure_is_unknown_not_logged_out() {
 }
 
 #[test]
-fn test_api_response_parse() {
-    let not_modified = "HTTP/2.0 304 Not Modified\r\nEtag: W/\"abc\"\r\nX-Ratelimit-Remaining: 4983\r\nX-Ratelimit-Reset: 1790000000\r\n\r\n";
-    let r = ApiResponse::parse(not_modified).unwrap();
-    assert_eq!(
-        (r.status, r.etag.as_deref(), r.rate_remaining),
-        (304, Some("W/\"abc\""), Some(4983))
-    );
-
-    let ok = ApiResponse::parse("HTTP/2.0 200 OK\r\nRetry-After: 30\r\n\r\n{\"n\":1}").unwrap();
-    assert_eq!((ok.status, ok.retry_after, ok.body.as_str()), (200, Some(30), "{\"n\":1}"));
-    assert!(ApiResponse::parse("gh: connection reset").is_none());
+fn test_retryable_is_network_and_server_errors_only() {
+    assert!(retryable(&CliError::io("github", std::io::Error::other("connection refused"))));
+    assert!(retryable(&CliError::execution_failed("github", 502, "GET x: HTTP 502")));
+    assert!(!retryable(&CliError::execution_failed("github", 404, "GET x: Not Found")));
+    assert!(!retryable(&CliError::execution_failed(
+        "github",
+        200,
+        "Could not resolve to a PullRequest"
+    )));
 }
 
 #[tokio::test(start_paused = true)]

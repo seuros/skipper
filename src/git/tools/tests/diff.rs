@@ -29,10 +29,10 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
     )
     .expect("staged patch");
     let staged_patch = staged["result"]["files"][0]["patch"].as_str().expect("staged patch text");
-    assert!(staged_patch.contains("--- a/file.txt"));
-    assert!(staged_patch.contains("+++ b/file.txt"));
-    assert!(staged_patch.contains("-two"));
-    assert!(staged_patch.contains("+staged"));
+    assert!(staged_patch.to_string().contains("--- a/file.txt"));
+    assert!(staged_patch.to_string().contains("+++ b/file.txt"));
+    assert!(staged_patch.to_string().contains("-two"));
+    assert!(staged_patch.to_string().contains("+staged"));
     assert!(!staged_patch.contains("worktree"));
 
     let worktree = execute_git_diff_structured(
@@ -82,7 +82,7 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
         },
     )
     .expect_err("worktree base must be rejected");
-    assert!(error.contains("base cannot be used with worktree scope"));
+    assert!(error.to_string().contains("base cannot be used with worktree scope"));
 }
 
 #[test]
@@ -120,8 +120,8 @@ fn execute_git_diff_name_only_skips_oversized_blob_content() {
         },
     )
     .expect_err("patch generation must reject oversized content");
-    assert!(error.contains("per-file limit"));
-    assert!(error.contains("generated.txt"));
+    assert!(error.to_string().contains("per-file limit"));
+    assert!(error.to_string().contains("generated.txt"));
 }
 
 #[test]
@@ -172,10 +172,13 @@ fn cancellable_blocking_waits_for_worker_shutdown_after_timeout() {
                 std::thread::sleep(Duration::from_millis(1));
             }
             worker_stopped.store(true, Ordering::Release);
-            Ok::<(), String>(())
+            Ok::<(), GitToolError>(())
         },
     ));
 
-    assert_eq!(result.expect_err("operation must time out"), "test operation timed out after 20ms");
+    assert_eq!(
+        result.expect_err("operation must time out"),
+        GitToolError::Failed("test operation timed out after 20ms".to_string())
+    );
     assert!(stopped.load(Ordering::Acquire), "timeout must not leave blocking work running");
 }

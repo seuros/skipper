@@ -35,7 +35,7 @@ pub fn show(cwd: &Path, rev: Option<&str>) -> Result<ShowEntry, GitError> {
 
     let object = repo
         .rev_parse_single(rev)
-        .map_err(|e| GitError::RefNotFound(format!("{rev}: {e}")))?
+        .map_err(|e| GitError::RefNotFound(format!("{rev}: {e:#}")))?
         .object()
         .git_op()?;
     let commit = object.try_into_commit().git_op()?;

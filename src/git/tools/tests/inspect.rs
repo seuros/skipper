@@ -128,7 +128,20 @@ fn execute_git_show_file_reads_revision_not_worktree() {
         },
     )
     .expect_err("missing file must fail");
-    assert!(missing.contains("path not found: missing.txt"));
+    assert!(missing.to_string().contains("path not found: missing.txt"));
+
+    let unknown = execute_git_show_file_structured(
+        dir,
+        GitShowFileParams {
+            file_path: "src/file.txt".to_string(),
+            rev: Some("no-such-rev".to_string()),
+            start_line: None,
+            end_line: None,
+        },
+    )
+    .expect_err("unknown revision must fail");
+    assert!(matches!(unknown, GitToolError::Caller(_)), "{unknown}");
+    assert!(!unknown.to_string().contains(".rs:"), "source location leaked: {unknown}");
 
     let incomplete = execute_git_show_file_structured(
         dir,
@@ -140,7 +153,7 @@ fn execute_git_show_file_reads_revision_not_worktree() {
         },
     )
     .expect_err("partial line range must fail");
-    assert!(incomplete.contains("both be provided or both be omitted"));
+    assert!(incomplete.to_string().contains("both be provided or both be omitted"));
 
     let directory = execute_git_show_file_structured(
         dir,
@@ -152,5 +165,5 @@ fn execute_git_show_file_reads_revision_not_worktree() {
         },
     )
     .expect_err("directory must fail");
-    assert!(directory.contains("path is a directory: src"));
+    assert!(directory.to_string().contains("path is a directory: src"));
 }

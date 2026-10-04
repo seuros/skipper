@@ -49,7 +49,7 @@ pub fn show_file(
     let spec = rev.unwrap_or("HEAD");
     let spec_id = repo
         .rev_parse_single(spec)
-        .map_err(|error| GitError::RefNotFound(format!("{spec}: {error}")))?
+        .map_err(|error| GitError::RefNotFound(format!("{spec}: {error:#}")))?
         .detach();
 
     let object = repo.find_object(spec_id).git_op()?;

@@ -92,8 +92,14 @@ impl SkipperServer {
 }
 
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
+/// A forge failure as a tool error. A request skipper cannot serve (no PR for
+/// the branch, no matching remote) is the caller's to fix: `InvalidArguments`,
+/// which does not trip the tool's circuit breaker.
 pub(super) fn cli_error(e: crate::error::CliError) -> ToolError {
-    ToolError::Execution(e.to_string())
+    match e {
+        crate::error::CliError::NoTarget(message) => ToolError::InvalidArguments(message),
+        e => ToolError::Execution(e.to_string()),
+    }
 }
 
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]

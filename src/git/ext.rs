@@ -9,7 +9,7 @@ pub(crate) trait GitResultExt<T> {
 
 impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
     fn git_op(self) -> Result<T, GitError> {
-        self.map_err(|e| GitError::Operation(e.to_string()))
+        self.map_err(|e| GitError::Operation(format!("{e:#}")))
     }
 }
 

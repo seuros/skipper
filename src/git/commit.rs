@@ -69,11 +69,11 @@ fn commit_inner(
 
     let index = repo
         .index_or_load_from_head_or_empty()
-        .map_err(|e| GitError::Operation(e.to_string()))?
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?
         .into_owned();
     reject_unsupported_index_entries(&index)?;
 
-    let head = repo.head().map_err(|e| GitError::Operation(e.to_string()))?;
+    let head = repo.head().map_err(|e| GitError::Operation(format!("{e:#}")))?;
     let parent_id = head.id().map(gix::Id::detach);
     let detached = head.is_detached();
     let branch = head.referent_name().map(|name| name.shorten().to_string());
@@ -91,8 +91,11 @@ fn commit_inner(
     let head_tree_id = match parent_id {
         Some(parent) => {
             let commit =
-                repo.find_commit(parent).map_err(|e| GitError::Operation(e.to_string()))?;
-            commit.tree_id().map(gix::Id::detach).map_err(|e| GitError::Operation(e.to_string()))?
+                repo.find_commit(parent).map_err(|e| GitError::Operation(format!("{e:#}")))?;
+            commit
+                .tree_id()
+                .map(gix::Id::detach)
+                .map_err(|e| GitError::Operation(format!("{e:#}")))?
         }
         None => repo.empty_tree().id,
     };
@@ -105,7 +108,7 @@ fn commit_inner(
     committed_paths.dedup();
 
     let mut editor =
-        repo.edit_tree(repo.empty_tree().id).map_err(|e| GitError::Operation(e.to_string()))?;
+        repo.edit_tree(repo.empty_tree().id).map_err(|e| GitError::Operation(format!("{e:#}")))?;
     for entry in index.entries() {
         let kind = match entry.mode {
             mode if mode == gix::index::entry::Mode::FILE => gix::objs::tree::EntryKind::Blob,
@@ -126,16 +129,16 @@ fn commit_inner(
         };
         editor
             .upsert(entry.path(&index), kind, entry.id)
-            .map_err(|e| GitError::Operation(e.to_string()))?;
+            .map_err(|e| GitError::Operation(format!("{e:#}")))?;
     }
-    let tree_id = editor.write().map_err(|e| GitError::Operation(e.to_string()))?.detach();
+    let tree_id = editor.write().map_err(|e| GitError::Operation(format!("{e:#}")))?.detach();
 
     let commit_id = if let Some(head_id) = amend_head_id {
         amend_head(&repo, &head, head_id, &message, tree_id)?
     } else {
         repo.commit("HEAD", &message, tree_id, parent_id)
             .map(gix::Id::detach)
-            .map_err(|e| GitError::Operation(e.to_string()))?
+            .map_err(|e| GitError::Operation(format!("{e:#}")))?
     };
 
     Ok(CommitResult {
@@ -208,17 +211,17 @@ fn amend_head(
     tree_id: gix::ObjectId,
 ) -> Result<gix::ObjectId, GitError> {
     let previous =
-        repo.find_commit(head_id).map_err(|error| GitError::Operation(error.to_string()))?;
+        repo.find_commit(head_id).map_err(|error| GitError::Operation(format!("{error:#}")))?;
     let parents = previous.parent_ids().map(gix::Id::detach).collect::<Vec<_>>();
-    let author = previous.author().map_err(|error| GitError::Operation(error.to_string()))?;
+    let author = previous.author().map_err(|error| GitError::Operation(format!("{error:#}")))?;
     let committer = repo
         .committer()
         .ok_or_else(|| GitError::Operation("committer identity is missing".to_string()))?
-        .map_err(|error| GitError::Operation(error.to_string()))?;
+        .map_err(|error| GitError::Operation(format!("{error:#}")))?;
     let commit_id = repo
         .new_commit_as(committer, author, message, tree_id, parents)
         .map(|commit| commit.id().detach())
-        .map_err(|error| GitError::Operation(error.to_string()))?;
+        .map_err(|error| GitError::Operation(format!("{error:#}")))?;
     let subject = message.lines().next().unwrap_or_default();
 
     repo.edit_references_as(
@@ -237,7 +240,7 @@ fn amend_head(
         }),
         Some(committer),
     )
-    .map_err(|error| GitError::Operation(error.to_string()))?;
+    .map_err(|error| GitError::Operation(format!("{error:#}")))?;
 
     Ok(commit_id)
 }
@@ -292,7 +295,7 @@ fn collect_staged_paths(
             Ok(ControlFlow::Continue(()))
         },
     )
-    .map_err(|e| GitError::Operation(e.to_string()))?;
+    .map_err(|e| GitError::Operation(format!("{e:#}")))?;
     if let Some(path) = changed_submodule {
         return Err(GitError::Unsupported(format!(
             "staged submodule changes are not supported: {path}"

@@ -16,10 +16,10 @@ impl SkipperServer {
         let env = self.env.clone();
         let snapshot =
             crate::git::tools::execute_blocking(env.cwd().to_path_buf(), (), move |_, ()| {
-                crate::workspace::snapshot(&env).map_err(|e| e.to_string())
+                Ok(crate::workspace::snapshot(&env)?)
             })
             .await
-            .map_err(ResourceError::Read)?;
+            .map_err(|e| ResourceError::Read(e.to_string()))?;
 
         json_resource("skipper://workspace", &snapshot)
     }
@@ -66,10 +66,7 @@ impl SkipperServer {
             ));
         };
 
-        let repo = ForgejoClient::new(creds)
-            .repo(&owner, &name)
-            .await
-            .map_err(|e| ResourceError::Read(e.to_string()))?;
+        let repo = ForgejoClient::new(creds).repo(&owner, &name).await.map_err(forge_error)?;
 
         let mut payload =
             serde_json::to_value(&repo).map_err(|e| ResourceError::Internal(e.to_string()))?;
@@ -89,14 +86,14 @@ impl SkipperServer {
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_checks(&self, ctx: Ctx<'_>) -> ResourceResult {
+        use crate::environment::Environment as _;
         use crate::provider::github::{CheckCounts, GitHubProvider};
 
         let (number, pr) = pr_param(&ctx)?;
-
-        let checks = GitHubProvider::new()
-            .pr_checks(pr)
-            .await
-            .map_err(|e| ResourceError::Read(e.to_string()))?;
+        let repo = github_repo(&self.env)?;
+        let gh = GitHubProvider::new();
+        let pr = gh.resolve_pr(&repo, pr, self.env.cwd()).await.map_err(forge_error)?;
+        let checks = gh.pr_checks(&repo, pr).await.map_err(forge_error)?;
 
         let counts = CheckCounts::tally(&checks);
         let mut workflows = serde_json::Map::new();
@@ -135,7 +132,7 @@ impl SkipperServer {
     )]
     pub(crate) async fn pr_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
         let (number, pr) = pr_param(&ctx)?;
-        let discussion = discussion(pr, "all").await?;
+        let discussion = discussion(&self.env, pr, "all").await?;
         json_resource(format!("skipper://pr/{number}/comments"), &discussion)
     }
 
@@ -150,7 +147,7 @@ impl SkipperServer {
     pub(crate) async fn pr_comments_kind(&self, ctx: Ctx<'_>) -> ResourceResult {
         let (number, pr) = pr_param(&ctx)?;
         let kind = note_kind(&ctx)?;
-        let discussion = discussion(pr, &kind).await?;
+        let discussion = discussion(&self.env, pr, &kind).await?;
         json_resource(format!("skipper://pr/{number}/comments/{kind}"), &discussion)
     }
 
@@ -177,7 +174,8 @@ impl SkipperServer {
             view.watching.iter().map(|w| w.pr).filter(|pr| !found.iter().any(|(e, _)| e == pr))
         {
             let kind = kind.clone();
-            tasks.spawn(async move { (pr, discussion(Some(pr), &kind).await) });
+            let env = self.env.clone();
+            tasks.spawn(async move { (pr, discussion(&env, Some(pr), &kind).await) });
         }
         while let Some(joined) = tasks.join_next().await {
             let (pr, result) = joined.map_err(|e| ResourceError::Internal(e.to_string()))?;
@@ -200,16 +198,17 @@ impl SkipperServer {
         uri_template = "skipper://prs/{state}/{author}",
         name = "pr_list",
         title = "Recent PRs by state and author",
-        description = "Last 30 PRs of this repo in state open | closed | merged | all by author (a login, or me): pr, state, merged_at",
+        description = "Last 30 GitHub PRs, newest first, state=open|closed|merged|all, author=login|me: pr, title, head, state, merged_at",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_list(&self, ctx: Ctx<'_>) -> ResourceResult {
         let state = uri_choice(&ctx, "state", "open", &["open", "closed", "merged", "all"])?;
         let author = ctx.get_uri_param("author").unwrap_or_else(|| "me".to_string());
+        let repo = github_repo(&self.env)?;
         let prs = crate::provider::github::GitHubProvider::new()
-            .pr_list(&state, &author)
+            .pr_list(&repo, &state, &author)
             .await
-            .map_err(|e| ResourceError::Read(e.to_string()))?;
+            .map_err(forge_error)?;
         json_resource(format!("skipper://prs/{state}/{author}"), &prs)
     }
 
@@ -236,7 +235,7 @@ impl SkipperServer {
             "tea" => forgejo_client(&target)?.issues(&target.owner, &target.name, &state).await,
             _ => return Err(no_issue_forge(&target)),
         }
-        .map_err(|e| ResourceError::Read(e.to_string()))?;
+        .map_err(forge_error)?;
 
         json_resource(
             format!("skipper://issues/{state}"),
@@ -270,7 +269,7 @@ impl SkipperServer {
             "tea" => forgejo_client(&target)?.issue(&target.owner, &target.name, number).await,
             _ => return Err(no_issue_forge(&target)),
         }
-        .map_err(|e| ResourceError::Read(e.to_string()))?;
+        .map_err(forge_error)?;
 
         let Some(thread) = thread else {
             let hint = if target.forge == "github" {
@@ -338,17 +337,48 @@ fn forgejo_client(
 
 #[cfg(feature = "github")]
 async fn discussion(
+    env: &crate::environment::SkipperEnvironment,
     pr: Option<u64>,
     kind: &str,
 ) -> std::result::Result<crate::provider::github::PrDiscussion, ResourceError> {
-    let mut discussion = crate::provider::github::GitHubProvider::new()
-        .pr_discussion(pr)
-        .await
-        .map_err(|e| ResourceError::Read(e.to_string()))?;
+    use crate::environment::Environment as _;
+
+    let repo = github_repo(env)?;
+    let gh = crate::provider::github::GitHubProvider::new();
+    let pr = gh.resolve_pr(&repo, pr, env.cwd()).await.map_err(forge_error)?;
+    let mut discussion = gh.pr_discussion(&repo, pr).await.map_err(forge_error)?;
     if kind != "all" {
         discussion.notes.retain(|n| n.kind == kind);
     }
     Ok(discussion)
+}
+
+/// The workspace's GitHub repo: the current remote when on GitHub, else the
+/// one GitHub repo among the remotes.
+#[cfg(feature = "github")]
+fn github_repo(
+    env: &crate::environment::SkipperEnvironment,
+) -> std::result::Result<crate::workspace::ForgeRepo, ResourceError> {
+    use crate::workspace::RemoteError;
+
+    crate::workspace::forge_repo_on(env, "github").map_err(|e| match e {
+        RemoteError::Git(e) => ResourceError::Read(e.to_string()),
+        e => refused(e.to_string()),
+    })
+}
+
+/// A forge failure. Network and 5xx failures already went through skipper's
+/// retries, so they answer `RetryExhausted`, which mcp-host does not retry
+/// again; anything else (no such PR, no login, a 404) is refused at once.
+#[cfg(any(feature = "github", feature = "tea"))]
+fn forge_error(e: crate::error::CliError) -> ResourceError {
+    if crate::provider::retryable(&e) {
+        return ResourceError::RetryExhausted {
+            attempts: crate::provider::RETRY_ATTEMPTS,
+            message: e.to_string(),
+        };
+    }
+    refused(e.to_string())
 }
 
 #[cfg(feature = "github")]

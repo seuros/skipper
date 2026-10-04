@@ -78,6 +78,21 @@ pub enum RemoteError {
         "remote {remote} host {host} is not mapped to a forge; add it under [hosts] in skipper's config"
     )]
     Unmapped { remote: String, host: String },
+
+    #[error("no remote on {0}")]
+    NoForgeRemote(&'static str),
+
+    #[error(
+        "remotes {remotes} are different {forge} repos and the current remote is none of them; \
+         set the branch upstream to one"
+    )]
+    AmbiguousForge { forge: &'static str, remotes: String },
+}
+
+impl From<RemoteError> for crate::error::CliError {
+    fn from(e: RemoteError) -> Self {
+        Self::no_target(e.to_string())
+    }
 }
 
 /// Resolved from git config on every call, so a switched upstream applies to
@@ -101,6 +116,48 @@ pub fn forge_repo(env: &SkipperEnvironment) -> Result<ForgeRepo, RemoteError> {
         return Err(RemoteError::Unmapped { remote, host });
     };
     Ok(ForgeRepo { remote, forge, host, owner, name })
+}
+
+/// The repo on `forge`: the current remote when it is there, else the one repo
+/// the remotes have on that forge. Forge-specific reads (GitHub PR checks) keep
+/// working while the branch tracks a mirror on another forge.
+pub fn forge_repo_on(
+    env: &SkipperEnvironment,
+    forge: &'static str,
+) -> Result<ForgeRepo, RemoteError> {
+    match forge_repo(env) {
+        Ok(current) if current.forge == forge => return Ok(current),
+        Err(RemoteError::Git(e)) => return Err(RemoteError::Git(e)),
+        _ => {}
+    }
+
+    let candidates = crate::git::remotes(env.cwd())?
+        .remotes
+        .into_iter()
+        .filter_map(|(remote, url)| {
+            env.forge_for_url(&url).filter(|f| *f == forge)?;
+            let host = crate::remote::host_of(&url)?;
+            let (owner, name) = crate::remote::repo_path_of(&url)?;
+            Some(ForgeRepo { remote, forge, host, owner, name })
+        })
+        .collect();
+    pick_on(forge, candidates)
+}
+
+/// The single repo among `candidates`; remotes naming the same repo count once.
+fn pick_on(forge: &'static str, mut candidates: Vec<ForgeRepo>) -> Result<ForgeRepo, RemoteError> {
+    candidates.sort_by(|a, b| {
+        (&a.host, &a.owner, &a.name, &a.remote).cmp(&(&b.host, &b.owner, &b.name, &b.remote))
+    });
+    candidates.dedup_by(|b, a| (&a.host, &a.owner, &a.name) == (&b.host, &b.owner, &b.name));
+    match candidates.len() {
+        0 => Err(RemoteError::NoForgeRemote(forge)),
+        1 => Ok(candidates.remove(0)),
+        _ => Err(RemoteError::AmbiguousForge {
+            forge,
+            remotes: candidates.iter().map(|c| c.remote.as_str()).collect::<Vec<_>>().join(", "),
+        }),
+    }
 }
 
 pub fn snapshot(env: &SkipperEnvironment) -> Result<Workspace, GitError> {
@@ -150,3 +207,6 @@ pub fn snapshot(env: &SkipperEnvironment) -> Result<Workspace, GitError> {
         forges,
     })
 }
+
+#[cfg(test)]
+mod tests;

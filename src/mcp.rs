@@ -52,6 +52,38 @@ impl Environment for McpEnvironment {
     }
 }
 
+/// Re-reads the workspace's remotes before every `tools/list` and `tools/call`,
+/// so forge tool visibility follows `git remote add` or a switched upstream at
+/// once instead of on the next watcher tick. The watcher still notifies.
+struct RemoteHydrator(Arc<SkipperEnvironment>);
+
+impl CapabilityHydrator for RemoteHydrator {
+    fn hydrate<'a>(&'a self, _ctx: CapabilityHydrationContext) -> CapabilityHydrationFuture<'a> {
+        Box::pin(async move {
+            self.0.refresh().await;
+            Ok(())
+        })
+    }
+}
+
+/// Forge tools fail fast while the forge is down: three upstream failures in a
+/// minute open a tool's breaker for 30s. Caller errors (bad ref, no PR for the
+/// branch) answer `InvalidArguments` and never count.
+fn breaker() -> ToolBreakerConfig {
+    ToolBreakerConfig {
+        failure_threshold: 3,
+        failure_window_secs: 60.0,
+        half_open_timeout_secs: 30.0,
+        success_threshold: 1,
+        call_timeout_secs: 120.0,
+    }
+}
+
+/// Requests per second, and burst, across the server: far above an agent's
+/// pace, low enough to stop a runaway loop before it spends the forge's API
+/// rate limit.
+const RATE_LIMIT: (f64, usize) = (20.0, 40);
+
 pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     let registry = Arc::new(Registry::with_defaults());
     registry.detect_all().await;
@@ -82,6 +114,9 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
         .with_resources(false, false)
         .with_resource_templates()
         .with_tasks(true, true)
+        .with_circuit_breaker(breaker())
+        .with_rate_limit(RATE_LIMIT.0, RATE_LIMIT.1)
+        .with_capability_hydrator(RemoteHydrator(env.clone()))
         .with_logging()
         .with_environment(McpEnvironment { env: env.clone(), registry: registry.clone() })
         .build();

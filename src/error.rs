@@ -37,6 +37,11 @@ pub enum CliError {
 
     #[error("{cli} does not support {operation}")]
     Unsupported { cli: String, operation: String },
+
+    /// No repo, PR or run fits the request (no matching remote, no PR for
+    /// the branch); the message says what to change.
+    #[error("{0}")]
+    NoTarget(String),
 }
 
 impl CliError {
@@ -80,6 +85,10 @@ impl CliError {
         Self::Unsupported { cli: cli.into(), operation: operation.into() }
     }
 
+    pub fn no_target(message: impl Into<String>) -> Self {
+        Self::NoTarget(message.into())
+    }
+
     pub fn cli(&self) -> &str {
         match self {
             Self::NotInstalled { cli } => cli,
@@ -91,6 +100,7 @@ impl CliError {
             Self::Io { cli, .. } => cli,
             Self::Json { cli, .. } => cli,
             Self::Unsupported { cli, .. } => cli,
+            Self::NoTarget(_) => "",
         }
     }
 

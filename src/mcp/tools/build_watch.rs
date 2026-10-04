@@ -34,6 +34,7 @@ impl SkipperServer {
     #[mcp_tool(
         name = "build_watch",
         description = "Wait for a CI run's status to change, up to wait_secs. Returns the status either way; call again while terminal is false",
+        task_support = "optional",
         output = "BuildWatchResult",
         read_only = true,
         open_world = true,
@@ -41,7 +42,8 @@ impl SkipperServer {
     )]
     async fn build_watch(&self, _ctx: Ctx<'_>, params: Parameters<BuildWatchParams>) -> ToolResult {
         let provider = self.ci_provider(params.0.provider.as_deref())?;
-        let initial = provider.ci_run(params.0.run_id.as_deref()).await.map_err(cli_error)?;
+        let initial =
+            provider.ci_run(&self.env, params.0.run_id.as_deref()).await.map_err(cli_error)?;
 
         if initial.is_terminal() {
             return structured(BuildWatchResult {
@@ -62,7 +64,7 @@ impl SkipperServer {
             let remaining = deadline - Instant::now();
             tokio::time::sleep(interval.min(remaining)).await;
 
-            current = provider.ci_run(Some(&initial.id)).await.map_err(cli_error)?;
+            current = provider.ci_run(&self.env, Some(&initial.id)).await.map_err(cli_error)?;
             if current.status != initial.status {
                 break;
             }

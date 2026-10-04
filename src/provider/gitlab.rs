@@ -37,7 +37,11 @@ impl Provider for GitLabProvider {
         Box::pin(super::cli_authenticated(self.cli()))
     }
 
-    fn ci_runs(&self, limit: usize) -> BoxFuture<'_, Result<Vec<BuildRun>>> {
+    fn ci_runs<'a>(
+        &'a self,
+        _env: &'a crate::environment::SkipperEnvironment,
+        limit: usize,
+    ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move {
             let limit = limit.to_string();
             let pipelines: Vec<Pipeline> = self
@@ -47,7 +51,11 @@ impl Provider for GitLabProvider {
         })
     }
 
-    fn ci_run<'a>(&'a self, id: Option<&'a str>) -> BoxFuture<'a, Result<BuildRun>> {
+    fn ci_run<'a>(
+        &'a self,
+        _env: &'a crate::environment::SkipperEnvironment,
+        id: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<BuildRun>> {
         Box::pin(async move {
             let pipeline: Pipeline = match id {
                 Some(id) => {

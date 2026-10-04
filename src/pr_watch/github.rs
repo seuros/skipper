@@ -1,5 +1,5 @@
-//! A watched GitHub PR, read over REST through `gh api`. Requests carry the
-//! last ETag, so an unchanged PR answers 304 and costs no rate limit.
+//! A watched GitHub PR, read over REST. Requests carry the last ETag, so an
+//! unchanged PR answers 304 and costs no rate limit.
 
 use std::collections::HashSet;
 
@@ -7,7 +7,9 @@ use serde::Deserialize;
 
 use super::{ApiBudget, ChecksSummary, Event, FailedCheck, PrSnapshot, RateHint};
 use crate::error::{CliError, Result};
-use crate::provider::github::{ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login};
+use crate::provider::github::{
+    ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login, run_bucket, status_bucket,
+};
 use crate::provider::text::{EVENT_BODY_LIMIT, clip, readable};
 
 /// Pages of new comments read per poll before waiting for the next one.
@@ -196,7 +198,7 @@ impl GithubPr {
         }
 
         let Some(pr) = &self.last else {
-            return Err(CliError::parse_error("gh", &path, "no PR data yet"));
+            return Err(CliError::parse_error("github", &path, "no PR data yet"));
         };
 
         // Checks are read separately: failing them must not drop PR events.
@@ -363,11 +365,7 @@ impl GithubPr {
         match response.status {
             200 => Ok(Some(response)),
             304 => Ok(None),
-            status => Err(CliError::execution_failed(
-                "gh",
-                i32::from(status),
-                format!("HTTP {status} GET {path}"),
-            )),
+            _ => Err(response.error(&format!("GET {path}"))),
         }
     }
 }
@@ -404,33 +402,25 @@ pub(super) fn summarize(sha: &str, runs: &[CheckRun], statuses: &[CommitStatus])
     let mut failed = Vec::new();
 
     for run in runs {
-        match (run.status.as_str(), run.conclusion.as_deref()) {
-            ("completed", Some("success" | "neutral")) => counts.pass += 1,
-            ("completed", Some("skipped")) => counts.skipped += 1,
-            ("completed", Some("cancelled")) => counts.cancelled += 1,
-            ("completed", _) => {
-                counts.fail += 1;
-                failed.push(FailedCheck {
-                    name: run.name.clone(),
-                    link: run.html_url.clone(),
-                    description: run.output.as_ref().and_then(|o| o.title.clone()),
-                });
-            }
-            _ => counts.pending += 1,
+        let bucket = run_bucket(&run.status, run.conclusion.as_deref());
+        counts.add(bucket);
+        if bucket == "fail" {
+            failed.push(FailedCheck {
+                name: run.name.clone(),
+                link: run.html_url.clone(),
+                description: run.output.as_ref().and_then(|o| o.title.clone()),
+            });
         }
     }
     for status in statuses {
-        match status.state.as_str() {
-            "success" => counts.pass += 1,
-            "pending" => counts.pending += 1,
-            _ => {
-                counts.fail += 1;
-                failed.push(FailedCheck {
-                    name: status.context.clone(),
-                    link: status.target_url.clone(),
-                    description: status.description.clone(),
-                });
-            }
+        let bucket = status_bucket(&status.state);
+        counts.add(bucket);
+        if bucket == "fail" {
+            failed.push(FailedCheck {
+                name: status.context.clone(),
+                link: status.target_url.clone(),
+                description: status.description.clone(),
+            });
         }
     }
 

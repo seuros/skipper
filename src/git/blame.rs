@@ -38,7 +38,7 @@ pub fn blame(
     let blob = entry.object().git_op()?;
 
     let content = std::str::from_utf8(&blob.data)
-        .map_err(|e| GitError::Operation(format!("binary file: {e}")))?;
+        .map_err(|e| GitError::Operation(format!("binary file: {e:#}")))?;
 
     // Without full blame traversal (which gix doesn't yet expose as a
     // simple API), we return the file content attributed to HEAD.

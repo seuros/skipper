@@ -30,17 +30,17 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
 
     let mut index = repo
         .index_or_load_from_head_or_empty()
-        .map_err(|e| GitError::Operation(e.to_string()))?
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?
         .into_owned();
     let (mut pipeline, _) =
-        repo.filter_pipeline(None).map_err(|e| GitError::Operation(e.to_string()))?;
+        repo.filter_pipeline(None).map_err(|e| GitError::Operation(format!("{e:#}")))?;
     let mut excludes = repo
         .excludes(
             &index,
             None,
             gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
         )
-        .map_err(|e| GitError::Operation(e.to_string()))?;
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?;
 
     let mut normalized_paths = Vec::with_capacity(paths.len());
     let mut seen = BTreeSet::new();
@@ -84,7 +84,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
                 removed.push(display_path);
                 continue;
             }
-            Err(err) => return Err(GitError::Operation(err.to_string())),
+            Err(err) => return Err(GitError::Operation(format!("{err:#}"))),
         };
 
         if metadata.is_dir() {
@@ -109,7 +109,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
         if !tracked
             && excludes
                 .at_entry(path.as_bstr(), Some(mode))
-                .map_err(|e| GitError::Operation(e.to_string()))?
+                .map_err(|e| GitError::Operation(format!("{e:#}")))?
                 .is_excluded()
         {
             return Err(GitError::IgnoredPath(display_path));
@@ -117,7 +117,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
 
         let Some((id, kind, _)) = pipeline
             .worktree_file_to_object(path.as_bstr(), &index)
-            .map_err(|e| GitError::Operation(e.to_string()))?
+            .map_err(|e| GitError::Operation(format!("{e:#}")))?
         else {
             return Err(GitError::Unsupported(format!(
                 "unable to stage worktree entry: {display_path}"
@@ -130,7 +130,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
         }
 
         let stat = gix::index::entry::Stat::from_fs(&metadata)
-            .map_err(|e| GitError::Operation(e.to_string()))?;
+            .map_err(|e| GitError::Operation(format!("{e:#}")))?;
         if let Some(entry) = index
             .entry_mut_by_path_and_stage(path.as_bstr(), gix::index::entry::Stage::Unconflicted)
         {
@@ -155,7 +155,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
     index.remove_tree();
     index
         .write(gix::index::write::Options::default())
-        .map_err(|e| GitError::Operation(e.to_string()))?;
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?;
 
     Ok(AddResult { staged, removed })
 }

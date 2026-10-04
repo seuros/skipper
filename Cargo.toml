@@ -4,7 +4,7 @@ version = "0.5.0"
 edition = "2024"
 rust-version = "1.99"
 authors = ["Abdelkader Boudih"]
-description = "MCP server for git repositories: local git in-process via gitoxide, plus GitHub, GitLab, Gitea and Forgejo through their CLIs"
+description = "MCP server for git repositories: local git in-process via gitoxide; GitHub, Gitea and Forgejo over their APIs; GitLab through glab"
 license = "BSD-2-Clause"
 repository = "https://github.com/seuros/skipper"
 keywords = ["mcp", "git", "github", "gitlab", "forgejo"]
@@ -20,12 +20,12 @@ serde_json = "1"
 toml = "1.1"
 semver = "1"
 thiserror = "2"
-mcp-host = { version = "0.6.1", features = ["macros"] }
+mcp-host = { version = "0.7.0", features = ["macros"] }
 schemars = "1.2.2"
 jiff = { version = "0.2", features = ["serde"] }
 tracing = "0.1"
 urlencoding = "2"
-rama = { version = "0.4.0", default-features = false, features = ["std", "http", "tcp", "rustls", "tls", "http-backend", "dns"] }
+rama = { version = "0.4.0", default-features = false, features = ["std", "http", "tcp", "rustls", "ring", "tls", "http-backend", "dns"] }
 serde_yaml_ng = "0.10"
 similar = "3.2.0"
 url = "2.5.8"

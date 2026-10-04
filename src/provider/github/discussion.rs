@@ -7,26 +7,28 @@ use serde::{Deserialize, Serialize};
 use super::{GitHubProvider, PAGE};
 use crate::error::Result;
 use crate::provider::text::readable;
+use crate::workspace::ForgeRepo;
 
 impl GitHubProvider {
-    pub async fn pr_discussion(&self, pr: Option<u64>) -> Result<PrDiscussion> {
-        let number = match pr {
-            Some(n) => n,
-            None => self.current_pr().await?,
-        };
-
-        let pull = format!("repos/{{owner}}/{{repo}}/pulls/{number}");
-        let head: RestPull = self.api_json(&pull).await?;
+    pub async fn pr_discussion(&self, repo: &ForgeRepo, number: u64) -> Result<PrDiscussion> {
+        let base = format!(
+            "repos/{}/{}",
+            urlencoding::encode(&repo.owner),
+            urlencoding::encode(&repo.name)
+        );
+        let pull = format!("{base}/pulls/{number}");
+        let head: RestPull = self.api_json_at(&repo.host, &pull).await?;
         let sources = [
             ("inline", format!("{pull}/comments")),
-            ("comment", format!("repos/{{owner}}/{{repo}}/issues/{number}/comments")),
+            ("comment", format!("{base}/issues/{number}/comments")),
             ("review", format!("{pull}/reviews")),
         ];
         let mut notes = Vec::new();
         for (kind, path) in sources {
             for page in 1.. {
-                let batch: Vec<RestNote> =
-                    self.api_json(&format!("{path}?per_page={PAGE}&page={page}")).await?;
+                let batch: Vec<RestNote> = self
+                    .api_json_at(&repo.host, &format!("{path}?per_page={PAGE}&page={page}"))
+                    .await?;
                 let full = batch.len() == PAGE;
                 notes.extend(
                     batch

@@ -14,17 +14,47 @@ use crate::git::GitServer;
 
 const GIT_TOOL_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub(crate) async fn execute_blocking<P, F, R>(cwd: PathBuf, params: P, f: F) -> Result<R, String>
+/// Why a git tool call failed. Caller errors (a bad ref, nothing staged) are
+/// the request's fault: they answer `InvalidArguments`, which does not trip
+/// the tool's circuit breaker.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GitToolError {
+    #[error("{0}")]
+    Caller(String),
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl From<crate::git::GitError> for GitToolError {
+    fn from(e: crate::git::GitError) -> Self {
+        if e.is_caller_error() { Self::Caller(e.to_string()) } else { Self::Failed(e.to_string()) }
+    }
+}
+
+impl From<GitToolError> for ToolError {
+    fn from(e: GitToolError) -> Self {
+        match e {
+            GitToolError::Caller(message) => ToolError::InvalidArguments(message),
+            GitToolError::Failed(message) => ToolError::Execution(message),
+        }
+    }
+}
+
+pub(crate) async fn execute_blocking<P, F, R>(
+    cwd: PathBuf,
+    params: P,
+    f: F,
+) -> Result<R, GitToolError>
 where
     P: Send + 'static,
-    F: FnOnce(&Path, P) -> Result<R, String> + Send + 'static,
+    F: FnOnce(&Path, P) -> Result<R, GitToolError> + Send + 'static,
     R: Send + 'static,
 {
     let task = tokio::task::spawn_blocking(move || f(&cwd, params));
     tokio::time::timeout(GIT_TOOL_TIMEOUT, task)
         .await
-        .map_err(|_| "git tool timed out".to_string())?
-        .map_err(|e| format!("git tool task failed: {e}"))?
+        .map_err(|_| GitToolError::Failed("git tool timed out".to_string()))?
+        .map_err(|e| GitToolError::Failed(format!("git tool task failed: {e}")))?
 }
 
 async fn execute_cancellable_blocking<P, F, R>(
@@ -33,10 +63,10 @@ async fn execute_cancellable_blocking<P, F, R>(
     timeout: Duration,
     operation: &'static str,
     f: F,
-) -> Result<R, String>
+) -> Result<R, GitToolError>
 where
     P: Send + 'static,
-    F: FnOnce(&Path, P, Arc<AtomicBool>) -> Result<R, String> + Send + 'static,
+    F: FnOnce(&Path, P, Arc<AtomicBool>) -> Result<R, GitToolError> + Send + 'static,
     R: Send + 'static,
 {
     let cancel = Arc::new(AtomicBool::new(false));
@@ -45,14 +75,16 @@ where
     tokio::select! {
         biased;
         result = &mut task => {
-            result.map_err(|e| format!("{operation} task failed: {e}"))?
+            result.map_err(|e| GitToolError::Failed(format!("{operation} task failed: {e}")))?
         }
         _ = tokio::time::sleep(timeout) => {
             cancel.store(true, Ordering::Release);
             let _worker_result = task.await.map_err(|e| {
-                format!("{operation} timed out after {timeout:?}; worker cleanup failed: {e}")
+                GitToolError::Failed(format!(
+                    "{operation} timed out after {timeout:?}; worker cleanup failed: {e}"
+                ))
             })?;
-            Err(format!("{operation} timed out after {timeout:?}"))
+            Err(GitToolError::Failed(format!("{operation} timed out after {timeout:?}")))
         }
     }
 }
@@ -60,7 +92,7 @@ where
 pub(crate) async fn execute_git_diff_blocking(
     cwd: PathBuf,
     params: GitDiffParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     execute_cancellable_blocking(
         cwd,
         params,
@@ -71,27 +103,29 @@ pub(crate) async fn execute_git_diff_blocking(
     .await
 }
 
-fn output_from_json_result(result: Result<serde_json::Value, String>) -> ToolResult {
+fn output_from_json_result(result: Result<serde_json::Value, GitToolError>) -> ToolResult {
     match result {
         Ok(value) => ToolOutput::structured(value)
             .map_err(|e| ToolError::Execution(format!("non-object tool output: {e}"))),
-        Err(msg) => Err(ToolError::Execution(msg)),
+        Err(e) => Err(e.into()),
     }
 }
 
-fn line_range(start: Option<usize>, end: Option<usize>) -> Result<Option<(usize, usize)>, String> {
+fn line_range(
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<Option<(usize, usize)>, GitToolError> {
     match (start, end) {
         (Some(start), Some(end)) => Ok(Some((start, end))),
         (None, None) => Ok(None),
-        _ => {
-            Err("start_line and end_line must either both be provided or both be omitted"
-                .to_string())
-        }
+        _ => Err(GitToolError::Caller(
+            "start_line and end_line must either both be provided or both be omitted".to_string(),
+        )),
     }
 }
 
-fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
-    serde_json::to_value(value).map_err(|error| error.to_string())
+fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, GitToolError> {
+    serde_json::to_value(value).map_err(|error| GitToolError::Failed(error.to_string()))
 }
 
 fn default_log_limit() -> usize {
@@ -405,7 +439,7 @@ fn execute_git_diff_structured_with_cancel(
     cwd: &Path,
     params: GitDiffParams,
     cancel: Arc<AtomicBool>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     let GitDiffParams { scope, format, check, base, paths } = params;
     let report_scope = scope;
     let path_refs =
@@ -418,8 +452,7 @@ fn execute_git_diff_structured_with_cancel(
         path_refs.as_deref(),
         check,
         cancel,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     let result = match format {
         crate::git::DiffFormat::Patch => serde_json::json!({
             "format": format,
@@ -477,103 +510,103 @@ fn execute_git_diff_structured_with_cancel(
 pub fn execute_git_log_structured(
     cwd: &Path,
     params: GitLogParams,
-) -> Result<serde_json::Value, String> {
-    let entries = crate::git::log(cwd, Some(params.limit), params.branch.as_deref())
-        .map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let entries = crate::git::log(cwd, Some(params.limit), params.branch.as_deref())?;
     to_json_value(serde_json::json!({ "commits": entries }))
 }
 
 pub fn execute_git_show_structured(
     cwd: &Path,
     params: GitShowParams,
-) -> Result<serde_json::Value, String> {
-    let entry = crate::git::show(cwd, params.rev.as_deref()).map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let entry = crate::git::show(cwd, params.rev.as_deref())?;
     to_json_value(entry)
 }
 
 pub fn execute_git_show_file_structured(
     cwd: &Path,
     params: GitShowFileParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     let lines = line_range(params.start_line, params.end_line)?;
-    let file = crate::git::show_file(cwd, &params.file_path, params.rev.as_deref(), lines)
-        .map_err(|e| e.to_string())?;
+    let file = crate::git::show_file(cwd, &params.file_path, params.rev.as_deref(), lines)?;
     to_json_value(file)
 }
 
 pub fn execute_git_blame_structured(
     cwd: &Path,
     params: GitBlameParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     let lines = line_range(params.start_line, params.end_line)?;
-    let blamed = crate::git::blame(cwd, &params.file_path, lines).map_err(|e| e.to_string())?;
+    let blamed = crate::git::blame(cwd, &params.file_path, lines)?;
     to_json_value(serde_json::json!({ "lines": blamed }))
 }
 
 pub fn execute_git_repo_structured(
     cwd: &Path,
     _params: GitRepoParams,
-) -> Result<serde_json::Value, String> {
-    let info = crate::git::repo_info(cwd).map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let info = crate::git::repo_info(cwd)?;
     to_json_value(info)
 }
 
 pub fn execute_git_status_structured(
     cwd: &Path,
     _params: GitStatusParams,
-) -> Result<serde_json::Value, String> {
-    let info = crate::git::status(cwd).map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let info = crate::git::status(cwd)?;
     to_json_value(info)
 }
 
 pub fn execute_git_remotes_structured(
     cwd: &Path,
     _params: GitRemotesParams,
-) -> Result<serde_json::Value, String> {
-    let info = crate::git::remotes(cwd).map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let info = crate::git::remotes(cwd)?;
     to_json_value(info)
 }
 
 pub fn execute_git_add_structured(
     cwd: &Path,
     params: GitAddParams,
-) -> Result<serde_json::Value, String> {
-    let result = crate::git::add(cwd, &params.paths).map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, GitToolError> {
+    let result = crate::git::add(cwd, &params.paths)?;
     to_json_value(result)
 }
 
 pub fn execute_git_commit_structured(
     cwd: &Path,
     params: GitCommitParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     let result = if params.amend {
         crate::git::amend_with_trailers(cwd, &params.message, &params.trailers)
     } else {
         crate::git::commit_with_trailers(cwd, &params.message, &params.trailers)
-    }
-    .map_err(|e| e.to_string())?;
+    }?;
     to_json_value(result)
 }
 
 pub fn execute_git_branch_structured(
     cwd: &Path,
     params: GitBranchParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     let result = match params.operation {
         GitBranchOperation::Create => {
             if params.force {
-                return Err("force is only valid for branch deletion".to_string());
+                return Err(GitToolError::Caller(
+                    "force is only valid for branch deletion".to_string(),
+                ));
             }
             crate::git::create_branch(cwd, &params.name, params.start_point.as_deref())
         }
         GitBranchOperation::Delete => {
             if params.start_point.is_some() {
-                return Err("start_point is only valid for branch creation".to_string());
+                return Err(GitToolError::Caller(
+                    "start_point is only valid for branch creation".to_string(),
+                ));
             }
             crate::git::delete_branch(cwd, &params.name, params.force)
         }
-    }
-    .map_err(|error| error.to_string())?;
+    }?;
     to_json_value(result)
 }
 

@@ -3,11 +3,21 @@
 
 use serde::Deserialize;
 
-use super::{GitHubProvider, PAGE, User, login, retrying};
+use super::{GitHubProvider, PAGE, User, login};
 use crate::error::{CliError, Result};
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
 use crate::provider::text::readable;
-use crate::provider::{Provider, ProviderExt};
+
+const LIST_QUERY: &str = r"query($owner: String!, $name: String!, $first: Int!, $states: [IssueState!]) {
+  repository(owner: $owner, name: $name) {
+    issues(first: $first, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number title state createdAt updatedAt author { login }
+        labels(first: 20) { nodes { name } } comments { totalCount }
+      }
+    }
+  }
+}";
 
 impl GitHubProvider {
     /// The most recently updated issues of `owner/name` in `state`:
@@ -20,26 +30,16 @@ impl GitHubProvider {
         state: &str,
     ) -> Result<Vec<IssueSummary>> {
         let states = match state {
-            "open" => "states: [OPEN], ",
-            "closed" => "states: [CLOSED], ",
-            _ => "",
+            "open" => serde_json::json!(["OPEN"]),
+            "closed" => serde_json::json!(["CLOSED"]),
+            _ => serde_json::Value::Null,
         };
-        let query = format!(
-            "query=query($owner: String!, $name: String!) {{ repository(owner: $owner, name: $name) {{ \
-             issues(first: {LIST_LIMIT}, {states}orderBy: {{field: UPDATED_AT, direction: DESC}}) {{ \
-             nodes {{ number title state createdAt updatedAt author {{ login }} \
-             labels(first: 20) {{ nodes {{ name }} }} comments {{ totalCount }} }} }} }} }}"
-        );
-        let owner_var = format!("owner={owner}");
-        let name_var = format!("name={name}");
-        let mut args = vec!["api", "graphql", "-f", &query, "-f", &owner_var, "-f", &name_var];
-        if host != "github.com" {
-            args.extend(["--hostname", host]);
-        }
-
-        let response: Graphql = retrying(|| self.execute_json(&args)).await?;
-        let repository = response.data.repository.ok_or_else(|| {
-            CliError::parse_error(self.cli(), "", format!("no repository {owner}/{name} on {host}"))
+        let variables = serde_json::json!({
+            "owner": owner, "name": name, "first": LIST_LIMIT, "states": states,
+        });
+        let data: GqlData = self.graphql(host, LIST_QUERY, variables).await?;
+        let repository = data.repository.ok_or_else(|| {
+            CliError::no_target(format!("no repository {owner}/{name} on {host}"))
         })?;
         Ok(repository.issues.nodes.into_iter().map(GqlIssue::into_summary).collect())
     }
@@ -87,11 +87,6 @@ impl GitHubProvider {
             notes,
         }))
     }
-}
-
-#[derive(Deserialize)]
-struct Graphql {
-    data: GqlData,
 }
 
 #[derive(Deserialize)]

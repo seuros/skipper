@@ -80,7 +80,7 @@ pub fn is_terminal_status(status: &str) -> bool {
 
 /// `auth status` exits non-zero for a failed network round-trip too; these
 /// markers separate that from a missing or rejected login.
-#[cfg(any(feature = "github", feature = "gitlab"))]
+#[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 const NETWORK_FAILURES: &[&str] = &[
     "timeout",
     "timed out",
@@ -96,7 +96,7 @@ const NETWORK_FAILURES: &[&str] = &[
     "service unavailable",
 ];
 
-#[cfg(any(feature = "github", feature = "gitlab"))]
+#[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 fn network_failure(output: &str) -> bool {
     let output = output.to_lowercase();
     NETWORK_FAILURES.iter().any(|marker| output.contains(marker))
@@ -112,6 +112,43 @@ async fn cli_authenticated(cli: &str) -> Result<bool> {
         return Err(CliError::execution_failed(cli, output.code, output.stderr));
     }
     Ok(false)
+}
+
+/// Attempts `retrying` makes before giving up.
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) const RETRY_ATTEMPTS: u8 = 4;
+
+/// `call`, retried up to three times (~1s doubling, jittered) while it fails
+/// in a way a repeat can fix. Any other error returns at once. The one retry
+/// layer for forge HTTP calls: resources answer its exhaustion with
+/// `RetryExhausted`, which mcp-host does not retry again.
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) async fn retrying<T, F, Fut>(call: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    use chrono_machines::{AsyncRetryable, RetryOutcome};
+
+    let backoff = ExponentialBackoff::new()
+        .base_delay_ms(1_000)
+        .multiplier(2.0)
+        .max_delay_ms(4_000)
+        .max_attempts(RETRY_ATTEMPTS)
+        .jitter_factor(0.5);
+    call.retry_async(backoff)
+        .when(retryable)
+        .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
+        .await
+        .map(RetryOutcome::into_inner)
+        .map_err(|e| e.into_cause().expect("a failed retry carries its last error"))
+}
+
+/// The network dropped, or the forge answered 5xx: a repeat may get through.
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) fn retryable(e: &CliError) -> bool {
+    matches!(e, CliError::Io { .. } | CliError::ExecutionFailed { code: 500..=599, .. })
+        || network_failure(&e.to_string())
 }
 
 pub trait Provider: Send + Sync {
@@ -171,11 +208,21 @@ pub trait Provider: Send + Sync {
         Box::pin(executor::execute_success(self.cli(), args, timeout))
     }
 
-    fn ci_runs(&self, _limit: usize) -> BoxFuture<'_, Result<Vec<BuildRun>>> {
+    /// Recent CI runs of the workspace's repo on this forge.
+    fn ci_runs<'a>(
+        &'a self,
+        _env: &'a crate::environment::SkipperEnvironment,
+        _limit: usize,
+    ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI run listing")) })
     }
 
-    fn ci_run<'a>(&'a self, _id: Option<&'a str>) -> BoxFuture<'a, Result<BuildRun>> {
+    /// Run `id`, or the latest run of the current branch.
+    fn ci_run<'a>(
+        &'a self,
+        _env: &'a crate::environment::SkipperEnvironment,
+        _id: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<BuildRun>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI run status")) })
     }
 }

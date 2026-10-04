@@ -36,3 +36,11 @@ pub enum GitError {
     #[error("nothing staged to commit")]
     EmptyCommit,
 }
+
+impl GitError {
+    /// The request is at fault (a bad ref or path, nothing staged), not git:
+    /// asking differently fixes it.
+    pub fn is_caller_error(&self) -> bool {
+        !matches!(self, Self::Operation(_) | Self::Cancelled)
+    }
+}

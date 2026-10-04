@@ -74,7 +74,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
         GitCommitParams { message: "empty".to_string(), trailers: vec![], amend: false },
     )
     .expect_err("empty commit must fail");
-    assert!(empty.contains("nothing staged to commit"));
+    assert_eq!(empty, GitToolError::Caller("nothing staged to commit".to_string()));
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn execute_git_commit_rejects_invalid_structured_trailers() {
             },
         )
         .expect_err("invalid trailer must be rejected");
-        assert!(error.contains(expected), "unexpected error: {error}");
+        assert!(error.to_string().contains(expected), "unexpected error: {error}");
     }
 
     assert_eq!(
@@ -224,17 +224,17 @@ fn execute_git_add_stages_deletions_and_rejects_unsafe_paths() {
     let ignored =
         execute_git_add_structured(dir, GitAddParams { paths: vec!["ignored.log".to_string()] })
             .expect_err("ignored file must fail");
-    assert!(ignored.contains("path is ignored: ignored.log"));
+    assert!(ignored.to_string().contains("path is ignored: ignored.log"));
 
     let traversal =
         execute_git_add_structured(dir, GitAddParams { paths: vec!["../outside.txt".to_string()] })
             .expect_err("path traversal must fail");
-    assert!(traversal.contains("may not escape the repository"));
+    assert!(traversal.to_string().contains("may not escape the repository"));
 
     let directory =
         execute_git_add_structured(dir, GitAddParams { paths: vec![".git".to_string()] })
             .expect_err("git directory must fail");
-    assert!(directory.contains("Git directory"));
+    assert!(directory.to_string().contains("Git directory"));
 }
 
 #[test]
@@ -294,7 +294,9 @@ fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
         GitCommitParams { message: "change gitlink".to_string(), trailers: vec![], amend: false },
     )
     .expect_err("staged gitlink change must fail");
-    assert!(error.contains("staged submodule changes are not supported: vendor/reference"));
+    assert!(
+        error.to_string().contains("staged submodule changes are not supported: vendor/reference")
+    );
 }
 
 #[test]
@@ -378,5 +380,5 @@ fn execute_git_commit_rejects_amend_without_head_commit() {
     )
     .expect_err("unborn HEAD must not be amendable");
 
-    assert!(error.contains("cannot amend because HEAD has no commit"));
+    assert!(error.to_string().contains("cannot amend because HEAD has no commit"));
 }

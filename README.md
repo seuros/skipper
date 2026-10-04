@@ -32,8 +32,9 @@ rule. That is one binary to gate instead of 267 tools to audit.
 | Layer | Transport |
 |-------|-----------|
 | local git | [gitoxide](https://github.com/GitoxideLabs/gitoxide), in-process |
-| GitHub, GitLab | the `gh` and `glab` CLIs |
-| Gitea, Forgejo | REST over [rama](https://crates.io/crates/rama), token from tea's config |
+| GitHub | REST and GraphQL over [rama](https://crates.io/crates/rama), token from `gh auth token` |
+| GitLab | the `glab` CLI |
+| Gitea, Forgejo | REST over rama, token from tea's config |
 
 ## Authentication
 
@@ -48,6 +49,11 @@ gh auth login
 glab auth login
 tea login add
 ```
+
+For GitHub, skipper asks `gh auth token` for the token once per host (it
+honours `GH_TOKEN`), keeps it in memory only, and calls the API itself: one
+HTTP request instead of a `gh` process per query. A 401 fetches the token
+again, so `gh auth refresh` or a rotated token needs no restart.
 
 For Gitea and Forgejo, skipper reads the token from tea's config instead of
 running `tea`, which can block on an interactive prompt that never resolves
@@ -191,6 +197,12 @@ than guess. Switching branches or running `git branch -u` moves the next read
 to the other forge; no restart. Every issue payload names the `remote`,
 `forge` and `repo` it came from. A Gitea/Forgejo token needs the `read:issue`
 scope.
+
+GitHub-only reads (PR checks and discussion, CI runs, `pr_watch`) take the
+current remote when it is on GitHub, else the one GitHub repo among the
+remotes, so they keep working while the branch tracks a mirror on another
+forge. Two different GitHub repos (a fork and its upstream) with neither
+current is an error naming both.
 
 Claude Code never lists MCP resources to its model, so for `claude-code`
 clients skipper appends the resources visible to that session to its server

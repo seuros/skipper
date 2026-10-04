@@ -16,12 +16,11 @@ use chrono_machines::{BackoffStrategy, ExponentialBackoff};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use throttle_machines::{Gate, TokenBucket, TokenBucketParams, TokenBucketState};
-use tokio::sync::{Notify, OnceCell, watch};
+use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
 
 use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::error::{CliError, Result};
-use crate::provider::ProviderExt as _;
 use crate::provider::github::{CheckCounts, GitHubProvider};
 use github::{GithubPr, Polled, PrRef};
 
@@ -237,12 +236,6 @@ struct State {
     last_touch: Option<Instant>,
 }
 
-struct Repo {
-    host: String,
-    owner: String,
-    name: String,
-}
-
 pub struct PrWatcher {
     env: Arc<SkipperEnvironment>,
     gh: GitHubProvider,
@@ -253,7 +246,7 @@ pub struct PrWatcher {
     inbox_version: watch::Sender<u64>,
     blocking: AtomicBool,
     budget: ApiBudget,
-    repo: OnceCell<Repo>,
+    /// PR per `owner/repo:branch`, asked of GitHub once.
     branch_prs: Mutex<HashMap<String, u64>>,
 }
 
@@ -267,7 +260,6 @@ impl PrWatcher {
             inbox_version: watch::channel(0).0,
             blocking: AtomicBool::new(false),
             budget: ApiBudget::new(),
-            repo: OnceCell::new(),
             branch_prs: Mutex::default(),
         })
     }
@@ -279,17 +271,12 @@ impl PrWatcher {
         pr: Option<u64>,
         until: BTreeSet<EventKind>,
     ) -> Result<(u64, bool)> {
+        let repo = crate::workspace::forge_repo_on(&self.env, "github")?;
         let number = match pr {
             Some(number) => number,
-            None => self.branch_pr().await?,
+            None => self.branch_pr(&repo).await?,
         };
-        let repo = self.repo().await?;
-        let pr = PrRef {
-            host: repo.host.clone(),
-            owner: repo.owner.clone(),
-            repo: repo.name.clone(),
-            number,
-        };
+        let pr = PrRef { host: repo.host, owner: repo.owner, repo: repo.name, number };
 
         let (added, spawn) = {
             let mut state = self.lock();
@@ -452,65 +439,19 @@ impl PrWatcher {
         }
     }
 
-    async fn repo(&self) -> Result<&Repo> {
-        #[derive(Deserialize)]
-        struct Owner {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct View {
-            url: String,
-            owner: Owner,
-            name: String,
-        }
-
-        self.repo
-            .get_or_try_init(|| async {
-                if let Some(repo) = self.repo_from_remotes() {
-                    return Ok(repo);
-                }
-                let view: View =
-                    self.gh.execute_json(&["repo", "view", "--json", "url,owner,name"]).await?;
-                Ok(Repo {
-                    host: crate::remote::host_of(&view.url).unwrap_or_else(|| "github.com".into()),
-                    owner: view.owner.login,
-                    name: view.name,
-                })
-            })
-            .await
-    }
-
-    /// The GitHub repo from git remotes, without the network, when they name
-    /// exactly one. Several (fork and upstream) are left to gh's default repo.
-    fn repo_from_remotes(&self) -> Option<Repo> {
-        let remotes = crate::git::remotes(self.env.cwd()).ok()?.remotes;
-        let repos: BTreeSet<(String, String, String)> = remotes
-            .values()
-            .filter(|url| self.env.forge_for_url(url) == Some("github"))
-            .filter_map(|url| {
-                let (owner, name) = crate::remote::repo_path_of(url)?;
-                Some((crate::remote::host_of(url)?, owner, name))
-            })
-            .collect();
-        let mut repos = repos.into_iter();
-        match (repos.next(), repos.next()) {
-            (Some((host, owner, name)), None) => Some(Repo { host, owner, name }),
-            _ => None,
-        }
-    }
-
-    /// The PR for the current branch, asked of gh once per branch.
-    async fn branch_pr(&self) -> Result<u64> {
+    /// The PR of the checked-out branch in `repo`.
+    async fn branch_pr(&self, repo: &crate::workspace::ForgeRepo) -> Result<u64> {
         let branch = crate::git::repo_info(self.env.cwd())
             .ok()
             .and_then(|info| info.branch)
-            .ok_or_else(|| CliError::parse_error("git", "HEAD", "detached HEAD; pass `pr`"))?;
-        if let Some(number) = self.branch_prs.lock().expect("branch cache lock").get(&branch) {
+            .ok_or_else(|| CliError::no_target("detached HEAD; pass `pr`"))?;
+        let key = format!("{}:{branch}", repo.full_name());
+        if let Some(number) = self.branch_prs.lock().expect("branch cache lock").get(&key) {
             return Ok(*number);
         }
 
-        let number = self.gh.current_pr().await?;
-        self.branch_prs.lock().expect("branch cache lock").insert(branch, number);
+        let number = self.gh.pr_for_branch(repo, &branch).await?;
+        self.branch_prs.lock().expect("branch cache lock").insert(key, number);
         Ok(number)
     }
 

@@ -30,10 +30,10 @@ fn full_branch_name(name: &str) -> Result<FullName, GitError> {
 
     let full = format!("refs/heads/{name}");
     gix::validate::reference::branch_name(full.as_bytes().as_bstr()).map_err(|error| {
-        GitError::InvalidInput(format!("invalid branch name {name:?}: {error}"))
+        GitError::InvalidInput(format!("invalid branch name {name:?}: {error:#}"))
     })?;
     full.try_into()
-        .map_err(|error| GitError::InvalidInput(format!("invalid branch name {name:?}: {error}")))
+        .map_err(|error| GitError::InvalidInput(format!("invalid branch name {name:?}: {error:#}")))
 }
 
 pub fn create(
@@ -46,7 +46,7 @@ pub fn create(
     let start_point = start_point.unwrap_or("HEAD");
     let target = repo
         .rev_parse_single(start_point)
-        .map_err(|error| GitError::RefNotFound(format!("{start_point}: {error}")))?
+        .map_err(|error| GitError::RefNotFound(format!("{start_point}: {error:#}")))?
         .object()
         .git_op()?
         .peel_to_commit()
@@ -74,7 +74,7 @@ pub fn delete(cwd: &Path, name: &str, force: bool) -> Result<BranchMutationResul
     let full_name = full_branch_name(name)?;
     let branch_id = repo
         .find_reference(&full_name)
-        .map_err(|error| GitError::RefNotFound(format!("{name}: {error}")))?
+        .map_err(|error| GitError::RefNotFound(format!("{name}: {error:#}")))?
         .id()
         .detach();
 

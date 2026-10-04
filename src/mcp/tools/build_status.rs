@@ -30,12 +30,14 @@ impl SkipperServer {
 
         match params.0.run_id {
             Some(id) => {
-                let run = provider.ci_run(Some(&id)).await.map_err(cli_error)?;
+                let run = provider.ci_run(&self.env, Some(&id)).await.map_err(cli_error)?;
                 json_output(&run)
             }
             None => {
-                let runs =
-                    provider.ci_runs(params.0.limit.unwrap_or(10)).await.map_err(cli_error)?;
+                let runs = provider
+                    .ci_runs(&self.env, params.0.limit.unwrap_or(10))
+                    .await
+                    .map_err(cli_error)?;
                 json_output(&runs)
             }
         }

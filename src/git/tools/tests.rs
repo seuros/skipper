@@ -24,6 +24,7 @@ use super::GitCommitParams;
 use super::GitDiffParams;
 use super::GitShowFileParams;
 use super::GitShowParams;
+use super::GitToolError;
 use super::execute_cancellable_blocking;
 use super::execute_git_add_structured;
 use super::execute_git_blame_structured;
@@ -35,7 +36,7 @@ use super::execute_git_show_structured;
 fn execute_git_diff_structured(
     cwd: &Path,
     params: GitDiffParams,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, GitToolError> {
     execute_git_diff_structured_with_cancel(cwd, params, Arc::new(AtomicBool::new(false)))
 }
 

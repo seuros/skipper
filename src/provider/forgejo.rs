@@ -130,6 +130,13 @@ impl ForgejoClient {
         &self,
         path: &str,
     ) -> Result<T> {
+        super::retrying(|| self.get_json_once(path)).await
+    }
+
+    async fn get_json_once<T: serde::de::DeserializeOwned + Send + 'static>(
+        &self,
+        path: &str,
+    ) -> Result<T> {
         let url = format!("{}/api/v1{}", self.creds.url, path);
         let client = EasyHttpWebClient::default();
 

@@ -70,19 +70,22 @@ impl SkipperServer {
     ) -> ToolResult {
         if !self.registry.is_enabled("github") {
             return Err(ToolError::Execution(
-                "GitHub CLI is not available (missing or unauthenticated)".to_string(),
+                "GitHub is not available (gh missing or not logged in)".to_string(),
             ));
         }
 
-        let pr = params.0.pr;
+        use crate::environment::Environment as _;
+
+        let repo = crate::workspace::forge_repo_on(&self.env, "github")
+            .map_err(|e| cli_error(e.into()))?;
+        let gh = GitHubProvider::new();
+        let pr = gh.resolve_pr(&repo, params.0.pr, self.env.cwd()).await.map_err(cli_error)?;
         let fail_fast = params.0.fail_fast.unwrap_or(true);
         let timeout = Duration::from_secs(params.0.timeout_secs.unwrap_or(1800).clamp(30, 3600));
         let interval = Duration::from_secs(params.0.poll_secs.unwrap_or(10).clamp(5, 60));
 
-        let watch = GitHubProvider::new()
-            .pr_checks_watch(pr, fail_fast, timeout, interval)
-            .await
-            .map_err(cli_error)?;
+        let watch =
+            gh.pr_checks_watch(&repo, pr, fail_fast, timeout, interval).await.map_err(cli_error)?;
         structured(PrBuildResult::from_checks(watch.checks, watch.timed_out))
     }
 }
