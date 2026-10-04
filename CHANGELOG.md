@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/seuros/skipper/compare/skipper-v0.5.0...skipper-v0.6.0) (2026-10-04)
+
+
+### Features
+
+* GitHub over REST/GraphQL with gh's token; adopt mcp-host 0.7 ([eb36561](https://github.com/seuros/skipper/commit/eb365613fa3d8158319cd00b58e7d0ee06a4947d))
+* opt-in write tools: pr_merge, git_push, git_pull, git_fetch ([0120057](https://github.com/seuros/skipper/commit/012005744410e93a71a12835a574c7d4b26e7f85))
+* PR overview resource, build_watch commit= ([1d4dd86](https://github.com/seuros/skipper/commit/1d4dd8604ac9bf62f956b21540fbc8bc952dc8ca))
+
+
+### Bug Fixes
+
+* full issue and PR bodies, issue triage fields, name issue resources ([ad18e36](https://github.com/seuros/skipper/commit/ad18e36024c7a2d3741177b70faf3bba8611cede))
+
 ## [0.5.0](https://github.com/seuros/skipper/compare/skipper-v0.4.0...skipper-v0.5.0) (2026-10-03)
 
 
