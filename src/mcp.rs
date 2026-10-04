@@ -5,7 +5,7 @@ pub mod tools;
 
 pub use tools::SkipperServer;
 
-use crate::config::Config;
+use crate::config::{Config, WritesConfig};
 use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::provider::Registry;
 use crate::remote::ForgeHosts;
@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 pub struct McpEnvironment {
     env: Arc<SkipperEnvironment>,
     registry: Arc<Registry>,
+    writes: WritesConfig,
 }
 
 impl Environment for McpEnvironment {
@@ -41,6 +42,9 @@ impl Environment for McpEnvironment {
     }
 
     fn get_custom(&self, key: &str) -> Option<String> {
+        if key == "writes" {
+            return self.writes.enabled.then(|| "enabled".to_string());
+        }
         if let Some(name) = key.strip_prefix("forge:") {
             return (self.registry.is_enabled(name) && self.env.forges().contains(name))
                 .then(|| "enabled".to_string());
@@ -118,7 +122,11 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
         .with_rate_limit(RATE_LIMIT.0, RATE_LIMIT.1)
         .with_capability_hydrator(RemoteHydrator(env.clone()))
         .with_logging()
-        .with_environment(McpEnvironment { env: env.clone(), registry: registry.clone() })
+        .with_environment(McpEnvironment {
+            env: env.clone(),
+            registry: registry.clone(),
+            writes: config.writes,
+        })
         .build();
 
     server.register_router(
@@ -129,6 +137,7 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
             #[cfg(feature = "tea")]
             cwd: cwd.clone(),
             env: env.clone(),
+            writes: config.writes,
             #[cfg(feature = "github")]
             pr_watcher: crate::pr_watch::PrWatcher::new(env.clone()),
         }),

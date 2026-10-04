@@ -4,19 +4,22 @@ pub mod build_status;
 pub mod build_watch;
 #[cfg(feature = "github")]
 pub mod gh_repo_list;
+pub mod git_fetch;
+pub mod git_pull;
+pub mod git_push;
 #[cfg(feature = "gitlab")]
 pub mod glab_project_list;
 #[cfg(feature = "github")]
 pub mod pr_build_wait;
+#[cfg(feature = "github")]
+pub mod pr_merge;
 #[cfg(feature = "github")]
 pub mod pr_watch;
 #[cfg(feature = "tea")]
 pub mod repo_search;
 
 use mcp_host::prelude::*;
-#[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 use schemars::JsonSchema;
-#[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -31,6 +34,7 @@ pub struct SkipperServer {
     #[cfg(feature = "tea")]
     pub(crate) cwd: std::path::PathBuf,
     pub(crate) env: Arc<crate::environment::SkipperEnvironment>,
+    pub(crate) writes: crate::config::WritesConfig,
     #[cfg(feature = "github")]
     pub(crate) pr_watcher: Arc<crate::pr_watch::PrWatcher>,
 }
@@ -91,6 +95,54 @@ impl SkipperServer {
     }
 }
 
+impl SkipperServer {
+    /// Ask the user to approve the write `summary` describes, unless the
+    /// global config sets `[writes] confirm = false`. A declined write answers
+    /// `InvalidArguments`: the user's call, not a failure to trip a breaker.
+    pub(super) async fn confirm_write(
+        &self,
+        ctx: &Ctx<'_>,
+        summary: &str,
+    ) -> Result<(), ToolError> {
+        use mcp_host::prelude::MultiplexerError;
+        use mcp_host::protocol::types::ElicitationAction;
+        use std::time::Duration;
+
+        if !self.writes.confirm {
+            return Ok(());
+        }
+        let unsupported = || {
+            ToolError::Execution(
+                "this client cannot ask for confirmation (no MCP elicitation); set `[writes] \
+                 confirm = false` in ~/.config/skipper/config.toml to allow unattended writes"
+                    .to_string(),
+            )
+        };
+        let requester = ctx.client_requester().ok_or_else(unsupported)?;
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "approve": { "type": "boolean", "title": "Approve", "description": summary }
+            },
+            "required": ["approve"]
+        });
+        let answer = requester
+            .request_elicitation(summary.to_string(), schema, Some(Duration::from_secs(300)))
+            .await
+            .map_err(|e| match e {
+                MultiplexerError::UnsupportedCapability(_) => unsupported(),
+                e => ToolError::Execution(format!("confirmation failed: {e}")),
+            })?;
+        let approved = answer.action == ElicitationAction::Accept
+            && answer.content.as_ref().and_then(|c| c["approve"].as_bool()) == Some(true);
+        if approved {
+            Ok(())
+        } else {
+            Err(ToolError::InvalidArguments(format!("declined by the user: {summary}")))
+        }
+    }
+}
+
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 /// A forge failure as a tool error. A request skipper cannot serve (no PR for
 /// the branch, no matching remote) is the caller's to fix: `InvalidArguments`,
@@ -112,7 +164,22 @@ pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
 #[must_use]
 pub fn router() -> McpRouter<SkipperServer> {
     #[allow(unused_mut)]
-    let mut tools = McpToolRouter::new();
+    let mut tools = McpToolRouter::new()
+        .with_tool(
+            SkipperServer::git_fetch_tool_info(),
+            SkipperServer::git_fetch_handler,
+            Some(SkipperServer::git_fetch_visibility),
+        )
+        .with_tool(
+            SkipperServer::git_pull_tool_info(),
+            SkipperServer::git_pull_handler,
+            Some(SkipperServer::git_pull_visibility),
+        )
+        .with_tool(
+            SkipperServer::git_push_tool_info(),
+            SkipperServer::git_push_handler,
+            Some(SkipperServer::git_push_visibility),
+        );
 
     #[cfg(feature = "github")]
     {
@@ -131,6 +198,11 @@ pub fn router() -> McpRouter<SkipperServer> {
                 SkipperServer::pr_watch_tool_info(),
                 SkipperServer::pr_watch_handler,
                 Some(SkipperServer::pr_watch_visibility),
+            )
+            .with_tool(
+                SkipperServer::pr_merge_tool_info(),
+                SkipperServer::pr_merge_handler,
+                Some(SkipperServer::pr_merge_visibility),
             );
     }
 

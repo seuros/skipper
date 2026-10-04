@@ -110,6 +110,7 @@ fn forget_token(host: &str) {
 enum Method {
     Get,
     Post,
+    Put,
 }
 
 /// One request. Any HTTP status comes back as `Ok`; only a failure to get a
@@ -142,6 +143,7 @@ async fn send_once(
     let mut request = match method {
         Method::Get => client.get(url),
         Method::Post => client.post(url),
+        Method::Put => client.put(url),
     }
     .header("authorization", format!("Bearer {token}"))
     .header("accept", "application/vnd.github+json")
@@ -179,6 +181,12 @@ async fn send_once(
 /// GET a REST `path` (`repos/o/r/...`), conditional on `etag` when given.
 pub(crate) async fn get(host: &str, path: &str, etag: Option<&str>) -> Result<ApiResponse> {
     send(host, &Method::Get, &rest_url(host, path), etag, None).await
+}
+
+/// PUT a REST `path` with a JSON body. Not retried: a write is not repeated
+/// on a guess that it did not land.
+pub(crate) async fn put(host: &str, path: &str, body: &Value) -> Result<ApiResponse> {
+    send(host, &Method::Put, &rest_url(host, path), None, Some(body)).await
 }
 
 /// Run a GraphQL `query`; GraphQL reports its failures in `errors` with a 200.

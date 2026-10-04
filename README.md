@@ -10,18 +10,37 @@ their own sources: GitHub's has ~125 tools, GitLab's ~88, Gitea's ~54. One
 tool per endpoint, three servers, three vocabularies, and an agent that has
 to work out which one it is talking to.
 
-Skipper registers 15, and shows fewer than that: only the ones this
-repository can actually use.
+Skipper registers 20, and shows fewer than that: only the ones this
+repository can actually use, and the four that write only when you turn them
+on.
 
 An agent does not need to be emperor of your forge. It does not need to
 create or destroy an organization on any given turn. It needs to know what
 this repository is, whether the build passed, and what broke. Skipper exposes
 that and skips the rest.
 
-**No skipper tool can write to a forge.** There is no create, delete, merge,
-close, or fork. The only state any tool changes is local: staging,
-committing, and local branches. There is no push, fetch, or pull, so an
-agent cannot move a commit to a remote through skipper at all.
+**By default, no skipper tool can write to a forge.** There is no create,
+delete, close, or fork, and out of the box no merge, push, fetch, or pull
+either: the only state any tool changes is local (staging, committing, local
+branches), so an agent cannot move a commit to a remote through skipper.
+
+Merging and syncing are opt-in, in your global config only
+(`~/.config/skipper/config.toml`); a repository's own `skipper.toml` cannot
+turn them on:
+
+```toml
+[writes]
+enabled = true   # show pr_merge, git_push, git_pull, git_fetch
+confirm = true   # default: ask before each merge or push
+```
+
+With `confirm`, every merge and push is put to you through the client (MCP
+elicitation) with exactly what will happen, such as `push master to github,
+origin` or `rebase #6 "chore: release 0.6.0" (release → master)`, and runs only
+if you approve. A client that cannot ask is refused; `confirm = false` lets
+writes run unattended. Even then nothing forces or deletes: `+ref`, `a:b`
+and `-option` refspecs are refused, and a merge is pinned to the head sha it
+was checked at, so a push in between fails it.
 
 The destructive operations still exist in the CLIs. To delete a release, an
 agent calls `gh` directly, which your harness can allow or deny with one
@@ -107,10 +126,11 @@ Forge names accept aliases: `github`/`gh`, `gitlab`/`glab`, and
 whose host isn't mapped simply expose no forge tools. The unmapped hosts are
 logged at startup so you know what to add.
 
-Visibility is re-evaluated while the server runs. A background watcher polls
-the workspace's remotes, so `git init`, `git remote add`, re-pointing a
-remote, or removing one updates the tool set within a few seconds and emits
-`notifications/tools/list_changed`. No restart needed.
+Visibility is re-evaluated while the server runs. The remotes are re-read
+before every `tools/list` and `tools/call`, so `git init`, `git remote add`,
+re-pointing a remote, or removing one applies to the next call; a background
+watcher also emits `notifications/tools/list_changed` within a few seconds so
+clients re-list. No restart needed.
 
 ## Installation
 
@@ -153,9 +173,13 @@ Skipper speaks MCP over stdio. Add it to your client config:
 | `gh_repo_list` | GitHub | List repositories for the authenticated user |
 | `glab_project_list` | GitLab | List projects for the authenticated user |
 | `build_status` | GitHub/GitLab | CI run or pipeline status for the current repository |
-| `build_watch` | GitHub/GitLab | Wait for a CI run's status to change, up to a bounded time |
+| `build_watch` | GitHub/GitLab | Wait for a CI run's status to change, up to a bounded time; `commit=` waits for every run of a commit (task-capable) |
 | `pr_build_wait` | GitHub | Wait for a PR's checks to finish; structured verdict (task-capable) |
 | `pr_watch` | GitHub | Watch PRs for merge, close, comments, reviews, checks, and pushes (task-capable) |
+| `pr_merge` | GitHub, writes | Merge a PR after checking state, draft, conflicts, checks and the allowed method; confirmed |
+| `git_push` | writes | Push branches and tags to one, several, or all remotes; never forces; confirmed |
+| `git_pull` | writes | Fast-forward the branch to its upstream; never merges |
+| `git_fetch` | writes | Fetch one or all remotes, pruning deleted branches |
 | `git_status` | git | Staged, unstaged, and untracked files |
 | `git_diff` | git | Scoped patches, stats, or changed paths |
 | `git_log` | git | Recent commits |
@@ -177,6 +201,7 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://repo` | Gitea/Forgejo | The repository this workspace's remote points at, trying the current remote, then `origin`, when several match |
 | `skipper://issues/{state}` | GitHub, Gitea/Forgejo | The current remote's last 30 issues in `open`, `closed` or `all` state, latest update first: number, title, state, author, labels, comment count, created and updated times |
 | `skipper://issue/{number}` | GitHub, Gitea/Forgejo | One issue of the current remote: title, state, author, creation time, labels, assignees, the full body and every comment, cleaned like PR comments |
+| `skipper://pr/{number}` | GitHub | What a merge decision needs: state, draft, head/base and head sha, mergeability, review decision, allowed and default merge methods, labels, files, body; `current` selects the current branch's |
 | `skipper://pr/{number}/checks` | GitHub | Check matrix for a PR; `current` selects the current branch's |
 | `skipper://pr/{number}/comments` | GitHub | A PR's state (open/closed/merged) and, compactly, every inline review comment, conversation comment and review, bodies without collapsed `<details>`, HTML comments or HTML tags |
 | `skipper://pr/{number}/comments/{kind}` | GitHub | The same, keeping only `inline`, `comment` or `review` notes (`all` keeps every one) |

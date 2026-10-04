@@ -24,7 +24,28 @@ impl Output {
 }
 
 pub async fn execute(cli: &str, args: &[&str], timeout_duration: Duration) -> Result<Output> {
+    run(Command::new(cli), cli, args, timeout_duration).await
+}
+
+/// `execute` in `cwd`, with `envs` set for the child.
+pub async fn execute_in(
+    cli: &str,
+    args: &[&str],
+    cwd: &std::path::Path,
+    envs: &[(&str, &str)],
+    timeout_duration: Duration,
+) -> Result<Output> {
     let mut cmd = Command::new(cli);
+    cmd.current_dir(cwd).envs(envs.iter().copied());
+    run(cmd, cli, args, timeout_duration).await
+}
+
+async fn run(
+    mut cmd: Command,
+    cli: &str,
+    args: &[&str],
+    timeout_duration: Duration,
+) -> Result<Output> {
     cmd.args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

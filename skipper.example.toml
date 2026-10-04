@@ -57,3 +57,15 @@
 # url = "https://codeberg.org"  # or your self-hosted Forgejo
 # default_org = "myorg"
 # disabled = false
+
+# Writes: pr_merge, git_push, git_pull, git_fetch.
+#
+# Off by default, and read from the global config (~/.config/skipper/config.toml)
+# only: a repository's skipper.toml cannot turn them on. With confirm (the
+# default) each merge and push is put to the user through the client (MCP
+# elicitation); a client that cannot ask is refused. confirm = false lets
+# writes run unattended.
+
+# [writes]
+# enabled = true
+# confirm = true

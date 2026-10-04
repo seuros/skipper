@@ -12,6 +12,7 @@ mod remotes;
 mod repo;
 mod show;
 mod status;
+mod sync;
 pub mod tools;
 
 pub use add::AddResult;
@@ -51,6 +52,12 @@ pub use show::commit_id;
 pub use show::show;
 pub use status::FileStatus;
 pub use status::StatusInfo;
+pub use sync::PushPlan;
+pub use sync::SyncOutcome;
+pub use sync::fetch;
+pub use sync::plan_push;
+pub use sync::pull;
+pub use sync::push;
 
 use std::path::Path;
 

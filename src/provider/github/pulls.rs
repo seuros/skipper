@@ -80,6 +80,31 @@ impl GitHubProvider {
         Ok(pull.into_overview(&repository))
     }
 
+    /// Merge `number` by `method`, provided its head is still `head_sha`: a
+    /// push after the caller looked fails the merge instead of merging code
+    /// nobody checked. Returns the merge commit's sha.
+    pub async fn merge_pr(
+        &self,
+        repo: &ForgeRepo,
+        number: u64,
+        method: &str,
+        head_sha: &str,
+    ) -> Result<String> {
+        #[derive(Deserialize)]
+        struct Merged {
+            sha: String,
+        }
+        let path = format!(
+            "repos/{}/{}/pulls/{number}/merge",
+            urlencoding::encode(&repo.owner),
+            urlencoding::encode(&repo.name)
+        );
+        let body = serde_json::json!({ "merge_method": method, "sha": head_sha });
+        let response = super::client::put(&repo.host, &path, &body).await?;
+        let merged: Merged = response.ok_json(&format!("merge #{number}"))?;
+        Ok(merged.sha)
+    }
+
     /// The 30 newest PRs of `repo` in `state` (open | closed | merged | all) by
     /// `author` (a login, or `me`).
     pub async fn pr_list(

@@ -15,6 +15,33 @@ pub struct Config {
 
     #[serde(default)]
     pub hosts: HashMap<String, String>,
+
+    /// Read from the global config only; see [`Config::load`].
+    #[serde(default)]
+    pub writes: WritesConfig,
+}
+
+/// Tools that change a remote: `pr_merge`, `git_push`, `git_pull`,
+/// `git_fetch`. Off unless the user's global config turns them on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WritesConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Ask the user through the client (MCP elicitation) before each merge or
+    /// push. A client without elicitation is refused; `false` lets writes run
+    /// unattended.
+    #[serde(default = "confirm_by_default")]
+    pub confirm: bool,
+}
+
+fn confirm_by_default() -> bool {
+    true
+}
+
+impl Default for WritesConfig {
+    fn default() -> Self {
+        Self { enabled: false, confirm: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,26 +86,50 @@ pub struct ProviderSettings {
 }
 
 impl Config {
+    /// The workspace's `skipper.toml` over the global config. `[writes]` comes
+    /// from the global config alone: a checked-out repository must not be able
+    /// to turn on merging or pushing for whoever opens it.
     pub fn load() -> Self {
-        Self::load_from_paths(&[
-            PathBuf::from("skipper.toml"),
-            dirs::config_dir().map(|p| p.join("skipper/config.toml")).unwrap_or_default(),
-        ])
+        let global = dirs::config_dir().map(|p| p.join("skipper/config.toml"));
+        Self::load_with(Path::new("skipper.toml"), global.as_deref())
     }
 
+    pub fn load_with(local: &Path, global: Option<&Path>) -> Self {
+        let mut paths = vec![local.to_path_buf()];
+        paths.extend(global.map(Path::to_path_buf));
+        let mut config = Self::load_from_paths(&paths);
+        config.writes = global
+            .filter(|path| path.exists())
+            .and_then(Self::read_logged)
+            .map(|global| global.writes)
+            .unwrap_or_default();
+        config
+    }
+
+    /// Later paths are overridden by earlier ones. `[writes]` is not merged.
     pub fn load_from_paths(paths: &[PathBuf]) -> Self {
         let mut config = Config::default();
 
         for path in paths.iter().rev() {
             if path.exists()
-                && let Ok(contents) = std::fs::read_to_string(path)
-                && let Ok(loaded) = toml::from_str::<Config>(&contents)
+                && let Some(loaded) = Self::read_logged(path)
             {
                 config = config.merge(loaded);
             }
         }
 
         config
+    }
+
+    /// A config that fails to read or parse is skipped, loudly.
+    fn read_logged(path: &Path) -> Option<Self> {
+        match Self::load_from(path) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                tracing::warn!(error = %e, "ignoring skipper config");
+                None
+            }
+        }
     }
 
     pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
