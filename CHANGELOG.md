@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/seuros/skipper/compare/skipper-v0.6.0...skipper-v0.7.0) (2026-10-04)
+
+
+### Features
+
+* lean PR reads: a merge-decision overview, description and files apart ([5110eb7](https://github.com/seuros/skipper/commit/5110eb7f10eef805ad40b87ef23e6c521a98c829))
+* strip CodeRabbit noise from comments ([4282c03](https://github.com/seuros/skipper/commit/4282c03237d4aa0382f7fdabbc20b6745f420246))
+
+
+### Bug Fixes
+
+* keep collapsed &lt;details&gt; content in comment bodies ([c6a1c8b](https://github.com/seuros/skipper/commit/c6a1c8bc5b0bff31fd9973a3f4a847f48633beba))
+* let the caller choose the repo for PR and issue reads; name forks in errors ([d02161d](https://github.com/seuros/skipper/commit/d02161d591252bebcc1c4ccc17a1eb9a9c772887))
+
 ## [0.6.0](https://github.com/seuros/skipper/compare/skipper-v0.5.0...skipper-v0.6.0) (2026-10-04)
 
 
