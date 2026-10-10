@@ -30,11 +30,6 @@ impl SkipperServer {
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
     )]
-    #[expect(
-        clippy::unused_async,
-        clippy::unused_async_trait_impl,
-        reason = "resource handlers are async; this one reads memory"
-    )]
     pub(crate) async fn watch(&self, _ctx: Ctx<'_>) -> ResourceResult {
         let json =
             self.pr_watcher.view_json().map_err(|e| ResourceError::Internal(e.to_string()))?;

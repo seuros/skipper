@@ -302,7 +302,7 @@ impl<P: Provider> ProviderExt for P {
 
 /// Retry delays for a network call: ~1s doubling to 4s, jittered, at most
 /// `attempts` tries in all.
-pub(crate) fn network_backoff(attempts: u8) -> ExponentialBackoff {
+pub(crate) const fn network_backoff(attempts: u8) -> ExponentialBackoff {
     ExponentialBackoff::new()
         .base_delay_ms(1_000)
         .multiplier(2.0)
@@ -313,7 +313,7 @@ pub(crate) fn network_backoff(attempts: u8) -> ExponentialBackoff {
 
 /// Re-probe delays for unreachable providers: ~5s doubling to a 60s cap,
 /// seven retries (a few minutes) before giving up.
-fn reprobe_backoff() -> ExponentialBackoff {
+const fn reprobe_backoff() -> ExponentialBackoff {
     ExponentialBackoff::new()
         .base_delay_ms(5_000)
         .multiplier(2.0)
