@@ -41,6 +41,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
     .expect("commit");
     assert_eq!(committed["operation"], "create");
     assert_eq!(committed["previous_sha"], serde_json::Value::Null);
+    assert_eq!(committed["signed"], false, "commit.gpgsign is unset");
     assert_eq!(committed["subject"], "initial commit");
     assert_eq!(committed["trailers"], serde_json::json!([]));
     assert_eq!(committed["committed_paths"], serde_json::json!(["file.txt"]));
@@ -401,4 +402,52 @@ fn execute_git_add_stages_several_new_files_in_one_call() {
         git_output(dir, &["diff", "--cached", "--name-only"]),
         "beta.txt\nfile.txt\nzeta.txt\n"
     );
+}
+
+#[test]
+fn execute_git_commit_signs_when_commit_gpgsign_is_set() {
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path();
+    repo_with_commit(dir, "alpha\n");
+
+    // REAL: a throwaway key, no passphrase; git config asks for ssh signing.
+    let key = dir.join(".git").join("signing-key");
+    let made = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .status()
+        .expect("run ssh-keygen");
+    assert!(made.success(), "ssh-keygen failed");
+    git(dir, &["config", "gpg.format", "ssh"]);
+    git(dir, &["config", "user.signingKey", key.to_str().expect("utf8 key path")]);
+    git(dir, &["config", "commit.gpgsign", "true"]);
+    let commit = |message: &str| {
+        let params =
+            GitCommitParams { message: message.to_string(), trailers: vec![], amend: false };
+        execute_git_commit_structured(dir, params)
+    };
+
+    fs::write(dir.join("file.txt"), "beta\n").expect("write file");
+    git(dir, &["add", "file.txt"]);
+    let signed = commit("signed").expect("signed commit");
+    assert_eq!(signed["signed"], true);
+    assert!(
+        git_output(dir, &["cat-file", "commit", "HEAD"]).contains("-----BEGIN SSH SIGNATURE-----"),
+        "HEAD carries an SSH signature"
+    );
+    // git itself accepts it for the committer's key.
+    let public = fs::read_to_string(key.with_extension("pub")).expect("public key");
+    let allowed = dir.join(".git").join("allowed-signers");
+    fs::write(&allowed, format!("test@example.com {public}")).expect("allowed signers");
+    let allowed = format!("gpg.ssh.allowedSignersFile={}", allowed.display());
+    git(dir, &["-c", &allowed, "verify-commit", "HEAD"]);
+
+    // A key that cannot sign refuses the commit and leaves HEAD where it was.
+    let head = git_output(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["config", "user.signingKey", "/nonexistent/signing-key"]);
+    fs::write(dir.join("file.txt"), "gamma\n").expect("write file");
+    git(dir, &["add", "file.txt"]);
+    let refused = commit("unsignable").expect_err("signing must fail");
+    assert!(refused.to_string().contains("signing failed"), "{refused}");
+    assert_eq!(git_output(dir, &["rev-parse", "HEAD"]), head);
 }

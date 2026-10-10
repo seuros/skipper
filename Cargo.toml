@@ -37,7 +37,7 @@ url = "2.5.8"
 chrono-machines = { version = "0.8", features = ["async"] }
 throttle-machines = "0.2"
 tracing-subscriber = "0.3"
-gix = { version = "=0.89.0", features = ["max-performance-safe", "blob-diff", "status", "revision", "blame"] }
+gix = { version = "=0.89.0", features = ["max-performance-safe", "blob-diff", "status", "revision", "blame", "command"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

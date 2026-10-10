@@ -1,6 +1,7 @@
 use std::ops::ControlFlow;
 use std::path::Path;
 
+use gix::bstr::{BString, ByteSlice};
 use gix::refs::Target;
 use gix::refs::transaction::Change;
 use gix::refs::transaction::LogChange;
@@ -10,6 +11,7 @@ use gix::refs::transaction::RefLog;
 use serde::Serialize;
 
 use crate::git::error::GitError;
+use crate::git::ext::GitResultExt;
 use crate::git::open_repo;
 use crate::git::show::CommitTrailer;
 
@@ -23,6 +25,8 @@ pub struct CommitResult {
     pub subject: String,
     pub trailers: Vec<CommitTrailer>,
     pub committed_paths: Vec<String>,
+    /// Signed as `commit.gpgsign` asks (`gpg.format`, `user.signingKey`).
+    pub signed: bool,
 }
 
 pub fn commit_with_trailers(
@@ -125,12 +129,22 @@ fn commit_inner(
     }
     let tree_id = editor.write().map_err(|e| GitError::Operation(format!("{e:#}")))?.detach();
 
-    let commit_id = if let Some(head_id) = amend_head_id {
+    let (commit_id, signed) = if let Some(head_id) = amend_head_id {
         amend_head(&repo, &head, head_id, &message, tree_id)?
     } else {
-        repo.commit("HEAD", &message, tree_id, parent_id)
-            .map(gix::Id::detach)
-            .map_err(|e| GitError::Operation(format!("{e:#}")))?
+        let committer = committer(&repo)?;
+        let author = repo
+            .author()
+            .ok_or_else(|| GitError::Operation("author identity is missing".to_string()))?
+            .git_op()?;
+        let parents: Vec<_> = parent_id.into_iter().collect();
+        let reflog =
+            gix::reference::log::message("commit", message.as_bytes().as_bstr(), parents.len());
+        let expected = parent_id.map_or(PreviousValue::MustNotExist, |parent| {
+            PreviousValue::MustExistAndMatch(Target::Object(parent))
+        });
+        let commit = new_commit(committer, author, &message, tree_id, parents);
+        write_commit(&repo, commit, committer, "HEAD".try_into().git_op()?, expected, reflog)?
     };
 
     Ok(CommitResult {
@@ -142,6 +156,7 @@ fn commit_inner(
         subject: message.lines().next().unwrap_or_default().to_string(),
         trailers,
         committed_paths,
+        signed,
     })
 }
 
@@ -201,20 +216,67 @@ fn amend_head(
     head_id: gix::ObjectId,
     message: &str,
     tree_id: gix::ObjectId,
-) -> Result<gix::ObjectId, GitError> {
-    let previous =
-        repo.find_commit(head_id).map_err(|error| GitError::Operation(format!("{error:#}")))?;
-    let parents = previous.parent_ids().map(gix::Id::detach).collect::<Vec<_>>();
-    let author = previous.author().map_err(|error| GitError::Operation(format!("{error:#}")))?;
-    let committer = repo
-        .committer()
-        .ok_or_else(|| GitError::Operation("committer identity is missing".to_string()))?
-        .map_err(|error| GitError::Operation(format!("{error:#}")))?;
-    let commit_id = repo
-        .new_commit_as(committer, author, message, tree_id, parents)
-        .map(|commit| commit.id().detach())
-        .map_err(|error| GitError::Operation(format!("{error:#}")))?;
+) -> Result<(gix::ObjectId, bool), GitError> {
+    let previous = repo.find_commit(head_id).git_op()?;
+    let parents = previous.parent_ids().map(gix::Id::detach).collect();
+    let author = previous.author().git_op()?;
+    let committer = committer(repo)?;
     let subject = message.lines().next().unwrap_or_default();
+    let commit = new_commit(committer, author, message, tree_id, parents);
+    write_commit(
+        repo,
+        commit,
+        committer,
+        head.name().to_owned(),
+        PreviousValue::MustExistAndMatch(Target::Object(head_id)),
+        format!("commit (amend): {subject}").into(),
+    )
+}
+
+fn committer(repo: &gix::Repository) -> Result<gix::actor::SignatureRef<'_>, GitError> {
+    repo.committer()
+        .ok_or_else(|| GitError::Operation("committer identity is missing".to_string()))?
+        .git_op()
+}
+
+fn new_commit(
+    committer: gix::actor::SignatureRef<'_>,
+    author: gix::actor::SignatureRef<'_>,
+    message: &str,
+    tree: gix::ObjectId,
+    parents: Vec<gix::ObjectId>,
+) -> gix::objs::Commit {
+    gix::objs::Commit {
+        tree,
+        parents: parents.into(),
+        author: author.into(),
+        committer: committer.into(),
+        encoding: None,
+        message: message.into(),
+        extra_headers: Vec::new(),
+    }
+}
+
+/// Write `commit`, signed first when `commit.gpgsign` asks, and move `name`
+/// to it if it still is `expected`. A signature that cannot be made refuses
+/// the commit, as git does. Returns the id and whether it was signed.
+fn write_commit(
+    repo: &gix::Repository,
+    commit: gix::objs::Commit,
+    committer: gix::actor::SignatureRef<'_>,
+    name: gix::refs::FullName,
+    expected: PreviousValue,
+    reflog: BString,
+) -> Result<(gix::ObjectId, bool), GitError> {
+    let signing = repo.commit_signing_options_if_enabled().git_op()?;
+    let signed = signing.is_some();
+    let commit = match signing {
+        Some(options) => commit.sign(options).map_err(|e| {
+            GitError::Operation(format!("commit.gpgsign is on but signing failed: {e:#}"))
+        })?,
+        None => commit,
+    };
+    let commit_id = repo.write_object(&commit).git_op()?.detach();
 
     repo.edit_references_as(
         Some(RefEdit {
@@ -222,19 +284,19 @@ fn amend_head(
                 log: LogChange {
                     mode: RefLog::AndReference,
                     force_create_reflog: false,
-                    message: format!("commit (amend): {subject}").into(),
+                    message: reflog,
                 },
-                expected: PreviousValue::MustExistAndMatch(Target::Object(head_id)),
+                expected,
                 new: Target::Object(commit_id),
             },
-            name: head.name().to_owned(),
+            name,
             deref: true,
         }),
         Some(committer),
     )
-    .map_err(|error| GitError::Operation(format!("{error:#}")))?;
+    .git_op()?;
 
-    Ok(commit_id)
+    Ok((commit_id, signed))
 }
 
 fn reject_unsupported_index_entries(index: &gix::index::File) -> Result<(), GitError> {

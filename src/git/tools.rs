@@ -356,7 +356,7 @@ impl GitServer {
 
     #[mcp_tool(
         name = "git_commit",
-        description = "Create or amend an unsigned commit, with optional structured trailers. Git hooks are not run.",
+        description = "Create or amend a commit, with optional structured trailers. Signed when commit.gpgsign is set; git hooks are not run.",
         read_only = false,
         destructive = true,
         open_world = false
