@@ -1,15 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
-    #[serde(default)]
-    pub default_provider: Option<String>,
-
-    #[serde(default)]
-    pub remotes: HashMap<String, RemoteConfig>,
-
     #[serde(default)]
     pub providers: ProvidersConfig,
 
@@ -23,7 +17,7 @@ pub struct Config {
 
 /// Tools that change a remote: `pr_merge`, `git_push`, `git_pull`,
 /// `git_fetch`. Off unless the user's global config turns them on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct WritesConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -44,18 +38,8 @@ impl Default for WritesConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteConfig {
-    pub provider: String,
-
-    #[serde(default)]
-    pub url: Option<String>,
-
-    #[serde(default)]
-    pub cli_args: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// `[providers.<forge>]`. Gitea and Forgejo are one forge to skipper (tea).
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ProvidersConfig {
     #[serde(default)]
     pub github: Option<ProviderSettings>,
@@ -70,17 +54,9 @@ pub struct ProvidersConfig {
     pub forgejo: Option<ProviderSettings>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderSettings {
-    #[serde(default)]
-    pub url: Option<String>,
-
-    #[serde(default)]
-    pub default_org: Option<String>,
-
-    #[serde(default)]
-    pub cli_args: Vec<String>,
-
+    /// Hide the forge's tools whatever the remotes say.
     #[serde(default)]
     pub disabled: bool,
 }
@@ -127,8 +103,6 @@ impl Config {
 
     /// `other` over `self`; `[writes]` stays `self`'s.
     fn merge(mut self, other: Self) -> Self {
-        self.default_provider = other.default_provider.or(self.default_provider);
-        self.remotes.extend(other.remotes);
         self.hosts.extend(other.hosts);
 
         let (ours, theirs) = (&mut self.providers, other.providers);
@@ -140,26 +114,16 @@ impl Config {
         self
     }
 
-    pub fn remote(&self, name: &str) -> Option<&RemoteConfig> {
-        self.remotes.get(name)
-    }
-
-    pub fn provider_settings(&self, provider: &str) -> Option<&ProviderSettings> {
-        match provider {
-            "github" => self.providers.github.as_ref(),
-            "gitlab" => self.providers.gitlab.as_ref(),
-            "gitea" | "tea" => self.providers.gitea.as_ref(),
-            "forgejo" => self.providers.forgejo.as_ref(),
-            _ => None,
-        }
-    }
-
-    pub fn is_disabled(&self, provider: &str) -> bool {
-        self.provider_settings(provider).is_some_and(|s| s.disabled)
-    }
-
-    pub fn provider_url(&self, provider: &str) -> Option<&str> {
-        self.provider_settings(provider).and_then(|s| s.url.as_deref())
+    /// Whether `[providers]` turns off `forge` (github | gitlab | tea).
+    pub fn is_disabled(&self, forge: &str) -> bool {
+        let p = &self.providers;
+        let settings = match forge {
+            "github" => [&p.github, &None],
+            "gitlab" => [&p.gitlab, &None],
+            "tea" => [&p.gitea, &p.forgejo],
+            _ => [&None, &None],
+        };
+        settings.into_iter().any(|s| s.as_ref().is_some_and(|s| s.disabled))
     }
 }
 

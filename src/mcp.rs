@@ -84,10 +84,10 @@ const fn breaker() -> ToolBreakerConfig {
 const RATE_LIMIT: (f64, usize) = (20.0, 40);
 
 pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
-    let registry = Arc::new(Registry::with_defaults());
+    let config = Config::load();
+    let registry = Arc::new(Registry::with_defaults(|forge| config.is_disabled(forge)));
     registry.detect_all().await;
 
-    let config = Config::load();
     let mut hosts = ForgeHosts::with_defaults();
     hosts.extend(&config.hosts);
 

@@ -12,6 +12,14 @@ fn test_provider_status() {
 }
 
 #[test]
+fn test_registry_leaves_out_disabled_forges() {
+    let registry = Registry::with_defaults(|forge| forge == "tea");
+    assert!(registry.get("tea").is_none());
+    #[cfg(feature = "github")]
+    assert!(registry.get("github").is_some());
+}
+
+#[test]
 fn test_registry_new() {
     let registry = Registry::new();
     assert_eq!(registry.enabled_names(), Vec::<&str>::new());

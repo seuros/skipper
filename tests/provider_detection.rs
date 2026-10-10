@@ -14,7 +14,7 @@ use skipper::provider::gitlab::GitLabProvider;
 
 #[test]
 fn test_registry_creation() {
-    let registry = Registry::with_defaults();
+    let registry = Registry::with_defaults(|_| false);
 
     #[cfg(feature = "github")]
     assert!(registry.get("github").is_some());
@@ -118,7 +118,7 @@ async fn test_gitlab_detection() {
 
 #[tokio::test]
 async fn test_registry_detect_all() {
-    let registry = Registry::with_defaults();
+    let registry = Registry::with_defaults(|_| false);
     let results = registry.detect_all().await;
 
     println!("\n=== Provider Detection Results ===");
@@ -155,7 +155,7 @@ async fn test_registry_detect_all() {
 
 #[tokio::test]
 async fn test_enabled_providers_execute() {
-    let registry = Registry::with_defaults();
+    let registry = Registry::with_defaults(|_| false);
     registry.detect_all().await;
 
     for provider in registry.enabled_names().into_iter().filter_map(|name| registry.get(name)) {

@@ -310,19 +310,30 @@ impl Registry {
         Self { providers: HashMap::new(), status: RwLock::default() }
     }
 
-    pub fn with_defaults() -> Self {
-        #[allow(unused_mut)]
+    /// Every forge built in, less those `disabled` names.
+    pub fn with_defaults(disabled: impl Fn(&str) -> bool) -> Self {
         let mut registry = Self::new();
-
-        #[cfg(feature = "github")]
-        registry.register(Box::new(github::GitHubProvider::new()));
-
-        #[cfg(feature = "tea")]
-        registry.register(Box::new(tea::TeaProvider::new()));
-
-        #[cfg(feature = "gitlab")]
-        registry.register(Box::new(gitlab::GitLabProvider::new()));
-
+        let providers: [Option<Box<dyn Provider>>; 3] = [
+            cfg_select! {
+                feature = "github" => { Some(Box::new(github::GitHubProvider::new())) }
+                _ => { None }
+            },
+            cfg_select! {
+                feature = "tea" => { Some(Box::new(tea::TeaProvider::new())) }
+                _ => { None }
+            },
+            cfg_select! {
+                feature = "gitlab" => { Some(Box::new(gitlab::GitLabProvider::new())) }
+                _ => { None }
+            },
+        ];
+        for provider in providers.into_iter().flatten() {
+            if disabled(provider.name()) {
+                tracing::info!(provider = provider.name(), "disabled in config");
+            } else {
+                registry.register(provider);
+            }
+        }
         registry
     }
 
