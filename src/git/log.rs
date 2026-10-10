@@ -31,7 +31,9 @@ pub fn log(
         None => repo.head_id().git_op()?.detach(),
     };
 
-    let mut entries = Vec::with_capacity(limit);
+    // `limit` comes from the caller unchecked: size by what the walk yields,
+    // never by the request.
+    let mut entries = Vec::new();
 
     let walk = repo.rev_walk([start]).first_parent_only().all().git_op()?;
 

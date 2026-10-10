@@ -1,8 +1,9 @@
 use super::{
     Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    json_output, mcp_tool,
+    mcp_tool,
 };
 use crate::provider::forgejo::{ForgejoClient, any_credentials};
+use mcp_host::prelude::structured;
 use serde::Serialize;
 
 #[derive(Deserialize, JsonSchema)]
@@ -51,8 +52,9 @@ impl SkipperServer {
             .map_err(cli_error)?;
 
         let repos = results.data;
-        let next_page = (repos.len() as u32 == limit).then_some(page + 1);
+        let next_page = (u32::try_from(repos.len()) == Ok(limit)).then_some(page + 1);
 
-        json_output(&RepoSearchResult { page, limit, count: repos.len(), next_page, repos })
+        // `output` declares a schema, so the result must carry structured content.
+        structured(RepoSearchResult { page, limit, count: repos.len(), next_page, repos })
     }
 }

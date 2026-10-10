@@ -1,4 +1,17 @@
 use super::*;
+
+#[test]
+fn execute_git_log_sizes_by_history_not_by_limit() {
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path();
+    repo_with_commit(dir, "alpha\n");
+
+    // A limit no history reaches must not be allocated up front.
+    let log = execute_git_log_structured(dir, GitLogParams { limit: usize::MAX, branch: None })
+        .expect("log");
+    assert_eq!(log["commits"].as_array().map(Vec::len), Some(1), "{log}");
+}
+
 #[test]
 fn execute_git_blame_includes_head_author_placeholder() {
     let temp = tempdir().expect("tempdir");
