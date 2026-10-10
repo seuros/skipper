@@ -88,10 +88,10 @@ impl SkipperServer {
     pub(crate) async fn pr(&self, ctx: Ctx<'_>) -> ResourceResult {
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
-        let (gh, repo, pr) = pr_target(&self.env, spec.as_deref(), pr).await?;
+        let (gh, repo, pr) = pr_target(&self.env, spec, pr).await?;
         let overview = gh.pr_overview(&repo, pr).await.map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}"), spec.as_deref()),
+            with_repo(format!("skipper://pr/{number}"), spec),
             &Source::repo(&repo, overview),
         )
     }
@@ -109,7 +109,7 @@ impl SkipperServer {
 
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
-        let (gh, repo, pr) = pr_target(&self.env, spec.as_deref(), pr).await?;
+        let (gh, repo, pr) = pr_target(&self.env, spec, pr).await?;
         let checks = gh.pr_checks(&repo, pr).await.map_err(forge_error)?;
 
         let counts = CheckCounts::tally(&checks);
@@ -140,7 +140,7 @@ impl SkipperServer {
             "workflows": workflows,
         });
         json_resource(
-            with_repo(format!("skipper://pr/{number}/checks"), spec.as_deref()),
+            with_repo(format!("skipper://pr/{number}/checks"), spec),
             &Source::repo(&repo, matrix),
         )
     }
@@ -156,10 +156,10 @@ impl SkipperServer {
     pub(crate) async fn pr_files(&self, ctx: Ctx<'_>) -> ResourceResult {
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
-        let (gh, repo, pr) = pr_target(&self.env, spec.as_deref(), pr).await?;
+        let (gh, repo, pr) = pr_target(&self.env, spec, pr).await?;
         let files = gh.pr_files(&repo, pr).await.map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/files"), spec.as_deref()),
+            with_repo(format!("skipper://pr/{number}/files"), spec),
             &Source::repo(&repo, serde_json::json!({ "pr": pr, "files": files })),
         )
     }
@@ -175,9 +175,9 @@ impl SkipperServer {
     pub(crate) async fn pr_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
-        let (repo, discussion) = discussion(&self.env, spec.as_deref(), pr, "all").await?;
+        let (repo, discussion) = discussion(&self.env, spec, pr, "all").await?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/comments"), spec.as_deref()),
+            with_repo(format!("skipper://pr/{number}/comments"), spec),
             &Source::repo(&repo, discussion),
         )
     }
@@ -194,9 +194,9 @@ impl SkipperServer {
         let (number, pr) = pr_param(&ctx)?;
         let kind = note_kind(&ctx)?;
         let spec = ctx.get_uri_param("repo");
-        let (repo, discussion) = discussion(&self.env, spec.as_deref(), pr, &kind).await?;
+        let (repo, discussion) = discussion(&self.env, spec, pr, kind).await?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/comments/{kind}"), spec.as_deref()),
+            with_repo(format!("skipper://pr/{number}/comments/{kind}"), spec),
             &Source::repo(&repo, discussion),
         )
     }
@@ -222,9 +222,8 @@ impl SkipperServer {
         let mut tasks = tokio::task::JoinSet::new();
         for watched in view.watching.iter().filter(|w| !found.iter().any(|(e, _)| *e == w.pr)) {
             let (pr, repo) = (watched.pr, watched.repo.clone());
-            let kind = kind.clone();
             let env = self.env.clone();
-            tasks.spawn(async move { (pr, discussion(&env, Some(&repo), Some(pr), &kind).await) });
+            tasks.spawn(async move { (pr, discussion(&env, Some(&repo), Some(pr), kind).await) });
         }
         while let Some(joined) = tasks.join_next().await {
             let (pr, result) = joined.map_err(|e| ResourceError::Internal(e.to_string()))?;
@@ -251,15 +250,15 @@ impl SkipperServer {
     )]
     pub(crate) async fn pr_list(&self, ctx: Ctx<'_>) -> ResourceResult {
         let state = uri_choice(&ctx, "state", "open", &["open", "closed", "merged", "all"])?;
-        let author = ctx.get_uri_param("author").unwrap_or_else(|| "me".to_string());
+        let author = ctx.get_uri_param("author").unwrap_or("me");
         let spec = ctx.get_uri_param("repo");
-        let repo = github_repo(&self.env, spec.as_deref())?;
+        let repo = github_repo(&self.env, spec)?;
         let prs = crate::provider::github::GitHubProvider::new()
-            .pr_list(&repo, &state, &author)
+            .pr_list(&repo, state, author)
             .await
             .map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://prs/{state}/{author}"), spec.as_deref()),
+            with_repo(format!("skipper://prs/{state}/{author}"), spec),
             &Source::repo(&repo, serde_json::json!({ "prs": prs })),
         )
     }
@@ -276,22 +275,22 @@ impl SkipperServer {
     pub(crate) async fn issues(&self, ctx: Ctx<'_>) -> ResourceResult {
         let state = uri_choice(&ctx, "state", "open", &["open", "closed", "all"])?;
         let spec = ctx.get_uri_param("repo");
-        let target = issue_repo(&self.env, spec.as_deref())?;
+        let target = issue_repo(&self.env, spec)?;
         let issues = match target.forge {
             #[cfg(feature = "github")]
             "github" => {
                 crate::provider::github::GitHubProvider::new()
-                    .issues(&target.host, &target.owner, &target.name, &state)
+                    .issues(&target.host, &target.owner, &target.name, state)
                     .await
             }
             #[cfg(feature = "tea")]
-            "tea" => forgejo_client(&target)?.issues(&target.owner, &target.name, &state).await,
+            "tea" => forgejo_client(&target)?.issues(&target.owner, &target.name, state).await,
             _ => return Err(no_issue_forge(&target)),
         }
         .map_err(forge_error)?;
 
         json_resource(
-            with_repo(format!("skipper://issues/{state}"), spec.as_deref()),
+            with_repo(format!("skipper://issues/{state}"), spec),
             &Source::forge(&target, serde_json::json!({ "issues": issues })),
         )
     }
@@ -311,7 +310,7 @@ impl SkipperServer {
             ResourceError::InvalidUri(format!("issue number must be an integer: {raw}"))
         })?;
         let spec = ctx.get_uri_param("repo");
-        let target = issue_repo(&self.env, spec.as_deref())?;
+        let target = issue_repo(&self.env, spec)?;
         let thread = match target.forge {
             #[cfg(feature = "github")]
             "github" => {
@@ -334,7 +333,7 @@ impl SkipperServer {
             return Err(refused(format!("#{number} is a pull request{hint}")));
         };
         json_resource(
-            with_repo(format!("skipper://issue/{number}"), spec.as_deref()),
+            with_repo(format!("skipper://issue/{number}"), spec),
             &Source::forge(&target, thread),
         )
     }
@@ -470,7 +469,7 @@ fn forge_error(e: crate::error::CliError) -> ResourceError {
 }
 
 #[cfg(feature = "github")]
-fn note_kind(ctx: &Ctx<'_>) -> std::result::Result<String, ResourceError> {
+fn note_kind(ctx: &Ctx<'_>) -> std::result::Result<&'static str, ResourceError> {
     uri_choice(ctx, "kind", "all", &["description", "inline", "comment", "review", "all"])
 }
 
@@ -479,14 +478,13 @@ fn note_kind(ctx: &Ctx<'_>) -> std::result::Result<String, ResourceError> {
 fn uri_choice(
     ctx: &Ctx<'_>,
     name: &str,
-    default: &str,
-    allowed: &[&str],
-) -> std::result::Result<String, ResourceError> {
-    let value = ctx.get_uri_param(name).unwrap_or_else(|| default.to_string());
-    if allowed.contains(&value.as_str()) {
-        return Ok(value);
-    }
-    Err(ResourceError::InvalidUri(format!("{name} must be {}: {value}", allowed.join(" | "))))
+    default: &'static str,
+    allowed: &[&'static str],
+) -> std::result::Result<&'static str, ResourceError> {
+    let value = ctx.get_uri_param(name).unwrap_or(default);
+    allowed.iter().copied().find(|choice| *choice == value).ok_or_else(|| {
+        ResourceError::InvalidUri(format!("{name} must be {}: {value}", allowed.join(" | ")))
+    })
 }
 
 /// A read this workspace cannot serve, with its reason. mcp-host answers
@@ -503,9 +501,9 @@ fn json_resource(uri: impl Into<String>, value: &impl serde::Serialize) -> Resou
 }
 
 #[cfg(feature = "github")]
-fn pr_param(ctx: &Ctx<'_>) -> std::result::Result<(String, Option<u64>), ResourceError> {
-    let number = ctx.get_uri_param("number").unwrap_or_else(|| "current".to_string());
-    let pr = match number.as_str() {
+fn pr_param<'a>(ctx: &'a Ctx<'_>) -> std::result::Result<(&'a str, Option<u64>), ResourceError> {
+    let number = ctx.get_uri_param("number").unwrap_or("current");
+    let pr = match number {
         "current" => None,
         s => Some(s.parse::<u64>().map_err(|_| {
             ResourceError::InvalidUri(format!("PR number must be an integer or `current`: {s}"))
