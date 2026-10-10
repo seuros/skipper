@@ -34,7 +34,7 @@ impl SkipperServer {
         output = "PrMergeResult",
         destructive = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some() && e.get_custom(\"writes\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:github\") && e.has_custom(\"writes\")).unwrap_or(false)"
     )]
     async fn pr_merge(&self, ctx: Ctx<'_>, params: Parameters<PrMergeParams>) -> ToolResult {
         let (gh, repo, number) = self.locate_pr(params.0.repo.as_deref(), params.0.pr).await?;

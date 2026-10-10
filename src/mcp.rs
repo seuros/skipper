@@ -39,17 +39,17 @@ impl Environment for McpEnvironment {
         self.env.cwd()
     }
 
-    /// Presence is the answer: every predicate asks `.is_some()`, and they
-    /// run per tool on every listing. An empty `String` does not allocate.
-    fn get_custom(&self, key: &str) -> Option<String> {
-        let enabled = if key == "writes" {
+    /// What the visibility predicates ask: `writes`, `forge:<name>` (enabled
+    /// and a remote is on it), `provider:<name>` (enabled). Runs per tool on
+    /// every listing.
+    fn has_custom(&self, key: &str) -> bool {
+        if key == "writes" {
             self.writes.enabled
         } else if let Some(name) = key.strip_prefix("forge:") {
             self.registry.is_enabled(name) && self.env.has_forge(name)
         } else {
             key.strip_prefix("provider:").is_some_and(|name| self.registry.is_enabled(name))
-        };
-        enabled.then(String::new)
+        }
     }
 }
 

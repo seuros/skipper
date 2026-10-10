@@ -34,7 +34,7 @@ impl SkipperServer {
         output = "RepoSearchResult",
         read_only = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:tea\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:tea\")).unwrap_or(false)"
     )]
     async fn repo_search(&self, _ctx: Ctx<'_>, params: Parameters<RepoSearchParams>) -> ToolResult {
         let creds = any_credentials().ok_or_else(|| {

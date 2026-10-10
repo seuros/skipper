@@ -15,7 +15,7 @@ impl SkipperServer {
         description = "List the account's GitLab projects. Account-wide, not this repo",
         read_only = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:gitlab\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:gitlab\")).unwrap_or(false)"
     )]
     async fn glab_project_list(
         &self,

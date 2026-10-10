@@ -41,7 +41,7 @@ impl SkipperServer {
         output = "PrWatchResult",
         read_only = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:github\")).unwrap_or(false)"
     )]
     async fn pr_watch(&self, _ctx: Ctx<'_>, params: Parameters<PrWatchParams>) -> ToolResult {
         self.require_github()?;

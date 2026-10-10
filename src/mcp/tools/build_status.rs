@@ -19,7 +19,7 @@ impl SkipperServer {
         description = "Recent CI runs for this repo, or one by id. Non-blocking",
         read_only = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:gitlab\").is_some())).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.has_custom(\"forge:github\") || e.has_custom(\"forge:gitlab\"))).unwrap_or(false)"
     )]
     async fn build_status(
         &self,

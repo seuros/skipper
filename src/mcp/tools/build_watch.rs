@@ -52,7 +52,7 @@ impl SkipperServer {
         output = "BuildWatchResult",
         read_only = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:gitlab\").is_some())).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.has_custom(\"forge:github\") || e.has_custom(\"forge:gitlab\"))).unwrap_or(false)"
     )]
     async fn build_watch(&self, _ctx: Ctx<'_>, params: Parameters<BuildWatchParams>) -> ToolResult {
         let params = params.0;

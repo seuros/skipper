@@ -28,7 +28,7 @@ impl SkipperServer {
         name = "watch",
         description = "Watched PRs: status, checks, recent events, undelivered events, whether a pr_watch call blocks. Read-only; does not consume events",
         mime_type = "application/json",
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:github\")).unwrap_or(false)"
     )]
     pub(crate) async fn watch(&self, _ctx: Ctx<'_>) -> ResourceResult {
         let json =
@@ -42,7 +42,7 @@ impl SkipperServer {
         name = "repo",
         description = "Gitea/Forgejo repo of this workspace's remote, current remote first",
         mime_type = "application/json",
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:tea\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:tea\")).unwrap_or(false)"
     )]
     pub(crate) async fn repo(&self, _ctx: Ctx<'_>) -> ResourceResult {
         #[derive(serde::Serialize)]
@@ -211,7 +211,7 @@ impl SkipperServer {
         title = "Discussion of every watched PR",
         description = "skipper://pr/{number}/comments/{kind} for every PR under pr_watch or recently finished, in one read",
         mime_type = "application/json",
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:github\")).unwrap_or(false)"
     )]
     pub(crate) async fn watch_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
         /// One PR's entry: how a finished watch ended, its discussion, or why
@@ -286,7 +286,7 @@ impl SkipperServer {
         title = "Recent issues",
         description = "Issues (GitHub, Gitea/Forgejo), last 30 by update. state=open|closed|all: number, title, state, author, labels, comments, created_at, updated_at. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json",
-        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.has_custom(\"forge:github\") || e.has_custom(\"forge:tea\"))).unwrap_or(false)"
     )]
     pub(crate) async fn issues(&self, ctx: Ctx<'_>) -> ResourceResult {
         #[derive(serde::Serialize)]
@@ -323,7 +323,7 @@ impl SkipperServer {
         title = "Issue and discussion",
         description = "Issue (GitHub, Gitea/Forgejo): title, state, author, created_at, labels, assignees, body, comments. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json",
-        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && (e.has_custom(\"forge:github\") || e.has_custom(\"forge:tea\"))).unwrap_or(false)"
     )]
     pub(crate) async fn issue(&self, ctx: Ctx<'_>) -> ResourceResult {
         let raw = ctx.get_uri_param("number").unwrap_or_default();

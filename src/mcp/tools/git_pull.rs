@@ -14,7 +14,7 @@ impl SkipperServer {
         destructive = false,
         idempotent = true,
         open_world = true,
-        visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"writes\").is_some()).unwrap_or(false)"
+        visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"writes\")).unwrap_or(false)"
     )]
     async fn git_pull(&self, _ctx: Ctx<'_>, _params: Parameters<GitPullParams>) -> ToolResult {
         use crate::environment::Environment as _;
