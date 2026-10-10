@@ -24,10 +24,7 @@ pub fn log(
     let limit = limit.unwrap_or(20);
 
     let start = match branch {
-        Some(spec) => repo
-            .rev_parse_single(spec)
-            .map_err(|e| GitError::RefNotFound(format!("{spec}: {e:#}")))?
-            .detach(),
+        Some(spec) => crate::git::rev_parse(&repo, spec)?.detach(),
         None => repo.head_id().git_op()?.detach(),
     };
 

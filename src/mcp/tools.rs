@@ -88,6 +88,34 @@ impl SkipperServer {
     }
 }
 
+#[cfg(feature = "github")]
+impl SkipperServer {
+    /// Refuse while GitHub is not usable here (gh missing or logged out).
+    pub(super) fn require_github(&self) -> Result<(), ToolError> {
+        if self.registry.is_enabled("github") {
+            return Ok(());
+        }
+        Err(ToolError::Execution(
+            "GitHub is not available (gh missing or not logged in)".to_string(),
+        ))
+    }
+
+    /// The repo and PR a GitHub PR tool works on: `repo` and `pr` when
+    /// given, else this branch's PR on the current remote.
+    pub(super) async fn locate_pr(
+        &self,
+        repo: Option<&str>,
+        pr: Option<u64>,
+    ) -> Result<
+        (crate::provider::github::GitHubProvider, crate::workspace::ForgeRepo, u64),
+        ToolError,
+    > {
+        let gh = crate::provider::github::GitHubProvider::new();
+        let (repo, number) = gh.locate_pr(&self.env, repo, pr).await.map_err(cli_error)?;
+        Ok((gh, repo, number))
+    }
+}
+
 impl SkipperServer {
     /// Ask the user to approve the write `summary` describes, unless the
     /// global config sets `[writes] confirm = false`. A declined write answers

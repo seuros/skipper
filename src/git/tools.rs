@@ -32,6 +32,12 @@ impl From<crate::git::GitError> for GitToolError {
     }
 }
 
+impl From<crate::git::GitError> for ToolError {
+    fn from(e: crate::git::GitError) -> Self {
+        GitToolError::from(e).into()
+    }
+}
+
 impl From<GitToolError> for ToolError {
     fn from(e: GitToolError) -> Self {
         match e {
@@ -106,6 +112,16 @@ pub(crate) async fn execute_git_diff_blocking(
 
 /// The tool's object as structured output, as is: `ToolOutput::structured`
 /// would serialize the finished `Value` into a second copy.
+/// `f` on the blocking pool, from the server's working directory, answered
+/// as structured output.
+async fn run_git_tool<P, F>(params: P, f: F) -> ToolResult
+where
+    P: Send + 'static,
+    F: FnOnce(&Path, P) -> Result<Value, GitToolError> + Send + 'static,
+{
+    output_from_json_result(execute_blocking(PathBuf::from("."), params, f).await)
+}
+
 fn output_from_json_result(result: Result<Value, GitToolError>) -> ToolResult {
     match result? {
         Value::Object(map) => Ok(ToolOutput::json(map)),
@@ -280,9 +296,7 @@ impl GitServer {
         open_world = false
     )]
     async fn git_log(&self, _ctx: GitCtx<'_>, params: Parameters<GitLogParams>) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_log_structured).await,
-        )
+        run_git_tool(params.0, execute_git_log_structured).await
     }
 
     #[mcp_tool(
@@ -292,9 +306,7 @@ impl GitServer {
         open_world = false
     )]
     async fn git_show(&self, _ctx: GitCtx<'_>, params: Parameters<GitShowParams>) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_show_structured).await,
-        )
+        run_git_tool(params.0, execute_git_show_structured).await
     }
 
     #[mcp_tool(
@@ -308,9 +320,7 @@ impl GitServer {
         _ctx: GitCtx<'_>,
         params: Parameters<GitShowFileParams>,
     ) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_show_file_structured).await,
-        )
+        run_git_tool(params.0, execute_git_show_file_structured).await
     }
 
     #[mcp_tool(
@@ -320,9 +330,7 @@ impl GitServer {
         open_world = false
     )]
     async fn git_blame(&self, _ctx: GitCtx<'_>, params: Parameters<GitBlameParams>) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_blame_structured).await,
-        )
+        run_git_tool(params.0, execute_git_blame_structured).await
     }
 
     #[mcp_tool(
@@ -336,9 +344,7 @@ impl GitServer {
         _ctx: GitCtx<'_>,
         params: Parameters<GitStatusParams>,
     ) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_status_structured).await,
-        )
+        run_git_tool(params.0, execute_git_status_structured).await
     }
 
     #[mcp_tool(
@@ -349,9 +355,7 @@ impl GitServer {
         open_world = false
     )]
     async fn git_add(&self, _ctx: GitCtx<'_>, params: Parameters<GitAddParams>) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_add_structured).await,
-        )
+        run_git_tool(params.0, execute_git_add_structured).await
     }
 
     #[mcp_tool(
@@ -366,9 +370,7 @@ impl GitServer {
         _ctx: GitCtx<'_>,
         params: Parameters<GitCommitParams>,
     ) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_commit_structured).await,
-        )
+        run_git_tool(params.0, execute_git_commit_structured).await
     }
 
     #[mcp_tool(
@@ -383,9 +385,7 @@ impl GitServer {
         _ctx: GitCtx<'_>,
         params: Parameters<GitBranchParams>,
     ) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_branch_structured).await,
-        )
+        run_git_tool(params.0, execute_git_branch_structured).await
     }
 }
 

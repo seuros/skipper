@@ -11,12 +11,13 @@ use crate::git::show::ShowEntry;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tempfile::tempdir;
+
+use crate::git::test_support::{git, git_output, init_repo, repo_with_commit};
 
 use super::GitAddParams;
 use super::GitBlameParams;
@@ -35,37 +36,32 @@ use super::execute_git_log_structured;
 use super::execute_git_show_file_structured;
 use super::execute_git_show_structured;
 
+/// `git_diff` of `scope` as `format`: no base, path filter or check.
+fn diff_params(scope: DiffScope, format: DiffFormat) -> GitDiffParams {
+    GitDiffParams { scope, format, check: false, base: None, paths: None }
+}
+
+/// `git_show_file` of `file_path` at HEAD, whole.
+fn show_params(file_path: &str) -> GitShowFileParams {
+    GitShowFileParams {
+        file_path: file_path.to_string(),
+        rev: None,
+        start_line: None,
+        end_line: None,
+    }
+}
+
+/// `git_commit` of `message`, no trailers.
+fn commit(dir: &Path, message: &str, amend: bool) -> Result<serde_json::Value, GitToolError> {
+    execute_git_commit_structured(
+        dir,
+        GitCommitParams { message: message.to_string(), trailers: vec![], amend },
+    )
+}
+
 fn execute_git_diff_structured(
     cwd: &Path,
     params: GitDiffParams,
 ) -> Result<serde_json::Value, GitToolError> {
     execute_git_diff_structured_with_cancel(cwd, params, &Arc::new(AtomicBool::new(false)))
-}
-
-/// A repo at `dir` with an author configured and one commit of `file.txt`.
-fn repo_with_commit(dir: &Path, content: &str) {
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    fs::write(dir.join("file.txt"), content).expect("write file");
-    git(dir, &["add", "file.txt"]);
-    git(dir, &["commit", "-m", "initial"]);
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status =
-        Command::new("git").args(args).current_dir(dir).status().expect("failed to run git");
-    assert!(status.success(), "git command failed: git {}", args.join(" "));
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output =
-        Command::new("git").args(args).current_dir(dir).output().expect("failed to run git");
-    assert!(
-        output.status.success(),
-        "git command failed: git {}\nstderr: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("git output is utf8")
 }

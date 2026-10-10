@@ -56,9 +56,7 @@ fn execute_git_show_returns_subject_body_and_trailers() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     let file = dir.join("file.txt");
     fs::write(&file, "alpha\n").expect("write file");
@@ -92,9 +90,7 @@ fn execute_git_show_file_reads_revision_not_worktree() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     fs::create_dir(dir.join("src")).expect("create src");
     fs::write(dir.join("src/file.txt"), "alpha\nbeta\ngamma\n").expect("write file");
@@ -104,16 +100,8 @@ fn execute_git_show_file_reads_revision_not_worktree() {
 
     fs::write(dir.join("src/file.txt"), "worktree\n").expect("dirty worktree");
 
-    let shown_json = execute_git_show_file_structured(
-        dir,
-        GitShowFileParams {
-            file_path: "src/file.txt".to_string(),
-            rev: None,
-            start_line: None,
-            end_line: None,
-        },
-    )
-    .expect("show file");
+    let shown_json =
+        execute_git_show_file_structured(dir, show_params("src/file.txt")).expect("show file");
     let shown: FileAtRev = serde_json::from_value(shown_json).expect("parse show file json");
     assert_eq!(shown.path, "src/file.txt");
     assert_eq!(shown.rev, "HEAD");
@@ -126,10 +114,10 @@ fn execute_git_show_file_reads_revision_not_worktree() {
     let ranged = execute_git_show_file_structured(
         dir,
         GitShowFileParams {
-            file_path: "./src/file.txt".to_string(),
             rev: Some("HEAD".to_string()),
             start_line: Some(2),
             end_line: Some(3),
+            ..show_params("./src/file.txt")
         },
     )
     .expect("show file range");
@@ -138,26 +126,13 @@ fn execute_git_show_file_reads_revision_not_worktree() {
     assert_eq!(ranged["end_line"], 3);
     assert_eq!(ranged["total_lines"], 3);
 
-    let missing = execute_git_show_file_structured(
-        dir,
-        GitShowFileParams {
-            file_path: "missing.txt".to_string(),
-            rev: None,
-            start_line: None,
-            end_line: None,
-        },
-    )
-    .expect_err("missing file must fail");
+    let missing = execute_git_show_file_structured(dir, show_params("missing.txt"))
+        .expect_err("missing file must fail");
     assert!(missing.to_string().contains("path not found: missing.txt"));
 
     let unknown = execute_git_show_file_structured(
         dir,
-        GitShowFileParams {
-            file_path: "src/file.txt".to_string(),
-            rev: Some("no-such-rev".to_string()),
-            start_line: None,
-            end_line: None,
-        },
+        GitShowFileParams { rev: Some("no-such-rev".to_string()), ..show_params("src/file.txt") },
     )
     .expect_err("unknown revision must fail");
     assert!(matches!(unknown, GitToolError::Caller(_)), "{unknown}");
@@ -165,25 +140,12 @@ fn execute_git_show_file_reads_revision_not_worktree() {
 
     let incomplete = execute_git_show_file_structured(
         dir,
-        GitShowFileParams {
-            file_path: "src/file.txt".to_string(),
-            rev: None,
-            start_line: Some(1),
-            end_line: None,
-        },
+        GitShowFileParams { start_line: Some(1), ..show_params("src/file.txt") },
     )
     .expect_err("partial line range must fail");
     assert!(incomplete.to_string().contains("both be provided or both be omitted"));
 
-    let directory = execute_git_show_file_structured(
-        dir,
-        GitShowFileParams {
-            file_path: "src".to_string(),
-            rev: None,
-            start_line: None,
-            end_line: None,
-        },
-    )
-    .expect_err("directory must fail");
+    let directory =
+        execute_git_show_file_structured(dir, show_params("src")).expect_err("directory must fail");
     assert!(directory.to_string().contains("path is a directory: src"));
 }

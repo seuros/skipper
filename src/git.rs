@@ -14,6 +14,9 @@ mod status;
 mod sync;
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use add::add;
 pub use blame::blame;
 pub use branch::create as create_branch;
@@ -43,6 +46,11 @@ use std::path::Path;
 
 fn open_repo(cwd: &Path) -> Result<gix::Repository, GitError> {
     gix::discover(cwd).map_err(|e| GitError::NotARepo(e.to_string()))
+}
+
+/// The object `spec` names (a ref, a sha, `HEAD~2`), or why it names none.
+fn rev_parse<'repo>(repo: &'repo gix::Repository, spec: &str) -> Result<gix::Id<'repo>, GitError> {
+    repo.rev_parse_single(spec).map_err(|e| GitError::RefNotFound(format!("{spec}: {e:#}")))
 }
 
 /// The repository's identity and every remote, from one open of it.

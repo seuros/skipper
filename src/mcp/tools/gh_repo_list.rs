@@ -1,6 +1,6 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    json_output, mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, json_output,
+    mcp_tool,
 };
 
 #[derive(Deserialize, JsonSchema)]
@@ -22,11 +22,7 @@ impl SkipperServer {
         _ctx: Ctx<'_>,
         params: Parameters<GhRepoListParams>,
     ) -> ToolResult {
-        if !self.registry.is_enabled("github") {
-            return Err(ToolError::Execution(
-                "GitHub is not available (gh missing or not logged in)".to_string(),
-            ));
-        }
+        self.require_github()?;
         let host = crate::workspace::forge_repo_on(&self.env, "github")
             .map_or_else(|_| "github.com".to_string(), |repo| repo.host);
         let repos = crate::provider::github::GitHubProvider::new()

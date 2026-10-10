@@ -264,12 +264,7 @@ fn resolve_base_tree<'repo>(
         };
     }
 
-    repo.rev_parse_single(base_spec)
-        .map_err(|e| GitError::RefNotFound(format!("{base_spec}: {e:#}")))?
-        .object()
-        .git_op()?
-        .peel_to_tree()
-        .git_op()
+    crate::git::rev_parse(repo, base_spec)?.object().git_op()?.peel_to_tree().git_op()
 }
 
 fn collect_tree_index_paths(

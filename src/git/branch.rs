@@ -44,9 +44,7 @@ pub fn create(
     let repo = open_repo(cwd)?;
     let full_name = full_branch_name(name)?;
     let start_point = start_point.unwrap_or("HEAD");
-    let target = repo
-        .rev_parse_single(start_point)
-        .map_err(|error| GitError::RefNotFound(format!("{start_point}: {error:#}")))?
+    let target = crate::git::rev_parse(&repo, start_point)?
         .object()
         .git_op()?
         .peel_to_commit()

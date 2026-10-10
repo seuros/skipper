@@ -1,10 +1,5 @@
 use super::*;
-use std::process::Command;
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git").args(args).current_dir(dir).status().expect("run git");
-    assert!(status.success(), "git {args:?}");
-}
+use crate::git::test_support::git;
 
 #[test]
 fn test_environment_outside_a_repo() {

@@ -206,6 +206,22 @@ pub(crate) fn lowercase(mut s: String) -> String {
     s
 }
 
+/// A GraphQL connection's `nodes`.
+#[derive(Deserialize)]
+pub(super) struct Nodes<T> {
+    pub nodes: Vec<T>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct Label {
+    pub name: String,
+}
+
+/// The names in a GraphQL `labels { nodes { name } }`, none when absent.
+pub(super) fn label_names(labels: Option<Nodes<Label>>) -> Vec<String> {
+    labels.map(|l| l.nodes.into_iter().map(|l| l.name).collect()).unwrap_or_default()
+}
+
 /// REST page size: GitHub's maximum `per_page`.
 pub(crate) const PAGE: usize = 100;
 

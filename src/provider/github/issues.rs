@@ -4,7 +4,7 @@
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use super::{GitHubProvider, PAGE, User, login, lowercase, rest_url};
+use super::{GitHubProvider, Label, Nodes, PAGE, User, label_names, login, lowercase, rest_url};
 use crate::error::{CliError, Result};
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
 use crate::provider::text::readable_by;
@@ -109,11 +109,6 @@ struct GqlRepository {
 }
 
 #[derive(Deserialize)]
-struct Nodes<T> {
-    nodes: Vec<T>,
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GqlIssue {
     number: u64,
@@ -132,11 +127,6 @@ struct Count {
     total_count: u64,
 }
 
-#[derive(Deserialize)]
-struct Label {
-    name: String,
-}
-
 impl GqlIssue {
     fn into_summary(self) -> IssueSummary {
         IssueSummary {
@@ -144,10 +134,7 @@ impl GqlIssue {
             title: self.title,
             state: lowercase(self.state),
             author: login(self.author),
-            labels: self
-                .labels
-                .map(|l| l.nodes.into_iter().map(|l| l.name).collect())
-                .unwrap_or_default(),
+            labels: label_names(self.labels),
             comments: self.comments.total_count,
             created_at: self.created_at,
             updated_at: self.updated_at,

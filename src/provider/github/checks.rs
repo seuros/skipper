@@ -6,7 +6,7 @@ use std::collections::hash_map::Entry;
 
 use serde::{Deserialize, Serialize};
 
-use super::{GitHubProvider, PrCheck, run_bucket, status_bucket};
+use super::{GitHubProvider, Nodes, PrCheck, run_bucket, status_bucket};
 use crate::error::{CliError, Result};
 use crate::workspace::ForgeRepo;
 
@@ -117,11 +117,6 @@ struct Repository {
 #[derive(Deserialize)]
 struct Pull {
     commits: Nodes<CommitNode>,
-}
-
-#[derive(Deserialize)]
-struct Nodes<T> {
-    nodes: Vec<T>,
 }
 
 #[derive(Deserialize)]

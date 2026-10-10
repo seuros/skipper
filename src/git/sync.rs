@@ -190,14 +190,9 @@ enum Attempt {
 /// fails on the network. Fetch, fast-forward pull and push of the same refs
 /// are all safe to repeat. A timeout is not retried: its wait is long already.
 async fn run(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome, GitError> {
-    use chrono_machines::{AsyncRetryable, ExponentialBackoff, RetryOutcome};
+    use chrono_machines::{AsyncRetryable, RetryOutcome};
 
-    let backoff = ExponentialBackoff::new()
-        .base_delay_ms(1_000)
-        .multiplier(2.0)
-        .max_delay_ms(4_000)
-        .max_attempts(3)
-        .jitter_factor(0.5);
+    let backoff = crate::provider::network_backoff(3);
     let attempt = || async {
         match run_once(cwd, remote, args).await {
             Ok(outcome) if !outcome.ok && transient(&outcome.output) => {

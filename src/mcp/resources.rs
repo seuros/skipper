@@ -332,9 +332,7 @@ impl SkipperServer {
     )]
     pub(crate) async fn issue(&self, ctx: Ctx<'_>) -> ResourceResult {
         let raw = ctx.get_uri_param("number").unwrap_or_default();
-        let number = raw.parse::<u64>().map_err(|_| {
-            ResourceError::InvalidUri(format!("issue number must be an integer: {raw}"))
-        })?;
+        let number = parse_number(raw, "issue number must be an integer")?;
         let spec = ctx.get_uri_param("repo");
         let target = issue_repo(&self.env, spec)?;
         let thread = match target.forge {
@@ -546,9 +544,13 @@ fn pr_param<'a>(ctx: &'a Ctx<'_>) -> std::result::Result<(&'a str, Option<u64>),
     let number = ctx.get_uri_param("number").unwrap_or("current");
     let pr = match number {
         "current" => None,
-        s => Some(s.parse::<u64>().map_err(|_| {
-            ResourceError::InvalidUri(format!("PR number must be an integer or `current`: {s}"))
-        })?),
+        s => Some(parse_number(s, "PR number must be an integer or `current`")?),
     };
     Ok((number, pr))
+}
+
+/// `raw` as a number; `expected` says what it should have been.
+#[cfg(any(feature = "github", feature = "tea"))]
+fn parse_number(raw: &str, expected: &str) -> std::result::Result<u64, ResourceError> {
+    raw.parse().map_err(|_| ResourceError::InvalidUri(format!("{expected}: {raw}")))
 }

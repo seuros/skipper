@@ -4,9 +4,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     let file = dir.join("file.txt");
     fs::write(&file, "alpha\n").expect("write file");
@@ -34,11 +32,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
         fs::set_permissions(&hook, permissions).expect("make hook executable");
     }
 
-    let committed = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "initial commit".to_string(), trailers: vec![], amend: false },
-    )
-    .expect("commit");
+    let committed = commit(dir, "initial commit", false).expect("commit");
     assert_eq!(committed["operation"], "create");
     assert_eq!(committed["previous_sha"], serde_json::Value::Null);
     assert_eq!(committed["signed"], false, "commit.gpgsign is unset");
@@ -54,15 +48,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
 
     execute_git_add_structured(dir, GitAddParams { paths: vec!["file.txt".to_string()] })
         .expect("stage tracked file");
-    execute_git_commit_structured(
-        dir,
-        GitCommitParams {
-            message: "update tracked file".to_string(),
-            trailers: vec![],
-            amend: false,
-        },
-    )
-    .expect("followup commit");
+    commit(dir, "update tracked file", false).expect("followup commit");
 
     assert_eq!(git_output(dir, &["show", "HEAD:file.txt"]), "beta\n");
     assert!(
@@ -70,11 +56,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
         "unrequested files must remain untracked"
     );
 
-    let empty = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "empty".to_string(), trailers: vec![], amend: false },
-    )
-    .expect_err("empty commit must fail");
+    let empty = commit(dir, "empty", false).expect_err("empty commit must fail");
     assert_eq!(empty, GitToolError::Caller("nothing staged to commit".to_string()));
 }
 
@@ -83,9 +65,7 @@ fn execute_git_commit_appends_structured_trailers_and_returns_them() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
     fs::write(dir.join("file.txt"), "alpha\n").expect("write file");
     git(dir, &["add", "file.txt"]);
 
@@ -154,9 +134,7 @@ fn execute_git_commit_rejects_invalid_structured_trailers() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
     fs::write(dir.join("file.txt"), "alpha\n").expect("write file");
     git(dir, &["add", "file.txt"]);
 
@@ -206,9 +184,7 @@ fn execute_git_add_stages_deletions_and_rejects_unsafe_paths() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     fs::write(dir.join("tracked.txt"), "tracked\n").expect("write tracked file");
     git(dir, &["add", "tracked.txt"]);
@@ -262,9 +238,7 @@ fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     fs::write(dir.join("file.txt"), "alpha\n").expect("write file");
     git(dir, &["add", "file.txt"]);
@@ -277,11 +251,7 @@ fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
     fs::write(dir.join("file.txt"), "beta\n").expect("modify file");
     execute_git_add_structured(dir, GitAddParams { paths: vec!["file.txt".to_string()] })
         .expect("stage file");
-    execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "update file".to_string(), trailers: vec![], amend: false },
-    )
-    .expect("commit while preserving gitlink");
+    commit(dir, "update file", false).expect("commit while preserving gitlink");
 
     assert!(
         git_output(dir, &["ls-tree", "HEAD", "vendor/reference"]).contains(&gitlink_id),
@@ -290,11 +260,7 @@ fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
 
     let changed_gitlink_id = git_output(dir, &["rev-parse", "HEAD"]).trim().to_string();
     git(dir, &["update-index", "--cacheinfo", "160000", &changed_gitlink_id, "vendor/reference"]);
-    let error = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "change gitlink".to_string(), trailers: vec![], amend: false },
-    )
-    .expect_err("staged gitlink change must fail");
+    let error = commit(dir, "change gitlink", false).expect_err("staged gitlink change must fail");
     assert!(
         error.to_string().contains("staged submodule changes are not supported: vendor/reference")
     );
@@ -305,9 +271,7 @@ fn execute_git_commit_amends_message_and_includes_staged_changes() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
     fs::write(dir.join("file.txt"), "alpha\n").expect("write file");
     git(dir, &["add", "file.txt"]);
     git(dir, &["commit", "-m", "initial"]);
@@ -319,11 +283,7 @@ fn execute_git_commit_amends_message_and_includes_staged_changes() {
     let original_parent = git_output(dir, &["rev-parse", "HEAD^"]).trim().to_string();
     let original_author = git_output(dir, &["show", "-s", "--format=%an|%ae|%at", "HEAD"]);
 
-    let message_only = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "second, revised".to_string(), trailers: vec![], amend: true },
-    )
-    .expect("amend message");
+    let message_only = commit(dir, "second, revised", true).expect("amend message");
 
     assert_eq!(message_only["operation"], "amend");
     assert_eq!(message_only["previous_sha"].as_str(), Some(original_sha.as_str()));
@@ -342,15 +302,8 @@ fn execute_git_commit_amends_message_and_includes_staged_changes() {
     fs::write(dir.join("second.txt"), "updated\n").expect("update second file");
     execute_git_add_structured(dir, GitAddParams { paths: vec!["second.txt".to_string()] })
         .expect("stage amended content");
-    let with_changes = execute_git_commit_structured(
-        dir,
-        GitCommitParams {
-            message: "second, revised again".to_string(),
-            trailers: vec![],
-            amend: true,
-        },
-    )
-    .expect("amend with staged change");
+    let with_changes =
+        commit(dir, "second, revised again", true).expect("amend with staged change");
 
     assert_eq!(with_changes["committed_paths"], serde_json::json!(["second.txt"]));
     assert_eq!(git_output(dir, &["show", "HEAD:second.txt"]), "updated\n");
@@ -358,11 +311,7 @@ fn execute_git_commit_amends_message_and_includes_staged_changes() {
     assert_eq!(git_output(dir, &["rev-list", "--count", "HEAD"]), "2\n");
 
     git(dir, &["checkout", "--detach", "HEAD"]);
-    let detached = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "detached revision".to_string(), trailers: vec![], amend: true },
-    )
-    .expect("amend detached HEAD");
+    let detached = commit(dir, "detached revision", true).expect("amend detached HEAD");
     assert_eq!(detached["detached"], true);
     assert_eq!(detached["branch"], serde_json::Value::Null);
     assert_eq!(git_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD\n");
@@ -375,11 +324,7 @@ fn execute_git_commit_rejects_amend_without_head_commit() {
     let dir = temp.path();
     git(dir, &["init"]);
 
-    let error = execute_git_commit_structured(
-        dir,
-        GitCommitParams { message: "cannot exist".to_string(), trailers: vec![], amend: true },
-    )
-    .expect_err("unborn HEAD must not be amendable");
+    let error = commit(dir, "cannot exist", true).expect_err("unborn HEAD must not be amendable");
 
     assert!(error.to_string().contains("cannot amend because HEAD has no commit"));
 }
@@ -412,7 +357,7 @@ fn execute_git_commit_signs_when_commit_gpgsign_is_set() {
 
     // REAL: a throwaway key, no passphrase; git config asks for ssh signing.
     let key = dir.join(".git").join("signing-key");
-    let made = Command::new("ssh-keygen")
+    let made = std::process::Command::new("ssh-keygen")
         .args(["-q", "-t", "ed25519", "-N", "", "-f"])
         .arg(&key)
         .status()
@@ -421,15 +366,10 @@ fn execute_git_commit_signs_when_commit_gpgsign_is_set() {
     git(dir, &["config", "gpg.format", "ssh"]);
     git(dir, &["config", "user.signingKey", key.to_str().expect("utf8 key path")]);
     git(dir, &["config", "commit.gpgsign", "true"]);
-    let commit = |message: &str| {
-        let params =
-            GitCommitParams { message: message.to_string(), trailers: vec![], amend: false };
-        execute_git_commit_structured(dir, params)
-    };
 
     fs::write(dir.join("file.txt"), "beta\n").expect("write file");
     git(dir, &["add", "file.txt"]);
-    let signed = commit("signed").expect("signed commit");
+    let signed = commit(dir, "signed", false).expect("signed commit");
     assert_eq!(signed["signed"], true);
     assert!(
         git_output(dir, &["cat-file", "commit", "HEAD"]).contains("-----BEGIN SSH SIGNATURE-----"),
@@ -447,7 +387,7 @@ fn execute_git_commit_signs_when_commit_gpgsign_is_set() {
     git(dir, &["config", "user.signingKey", "/nonexistent/signing-key"]);
     fs::write(dir.join("file.txt"), "gamma\n").expect("write file");
     git(dir, &["add", "file.txt"]);
-    let refused = commit("unsignable").expect_err("signing must fail");
+    let refused = commit(dir, "unsignable", false).expect_err("signing must fail");
     assert!(refused.to_string().contains("signing failed"), "{refused}");
     assert_eq!(git_output(dir, &["rev-parse", "HEAD"]), head);
 }

@@ -140,17 +140,17 @@ mod dirs {
     use std::path::PathBuf;
 
     pub fn config_dir() -> Option<PathBuf> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let home_config = || std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config"));
+
         #[cfg(target_os = "macos")]
         {
-            std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config"))
+            home_config()
         }
 
         #[cfg(target_os = "linux")]
         {
-            std::env::var("XDG_CONFIG_HOME")
-                .ok()
-                .map(PathBuf::from)
-                .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+            std::env::var("XDG_CONFIG_HOME").ok().map(PathBuf::from).or_else(home_config)
         }
 
         #[cfg(target_os = "windows")]

@@ -47,10 +47,7 @@ pub fn show_file(
 
     let repo = open_repo(cwd)?;
     let spec = rev.unwrap_or("HEAD");
-    let spec_id = repo
-        .rev_parse_single(spec)
-        .map_err(|error| GitError::RefNotFound(format!("{spec}: {error:#}")))?
-        .detach();
+    let spec_id = crate::git::rev_parse(&repo, spec)?.detach();
 
     let object = repo.find_object(spec_id).git_op()?;
     let (sha, tree) = if let Ok(commit) = object.peel_to_commit() {

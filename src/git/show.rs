@@ -32,14 +32,7 @@ pub struct ShowEntry {
 /// The full id of the commit `rev` names (`HEAD`, a branch, a short sha).
 pub fn commit_id(cwd: &Path, rev: &str) -> Result<String, GitError> {
     let repo = open_repo(cwd)?;
-    let id = repo
-        .rev_parse_single(rev)
-        .map_err(|e| GitError::RefNotFound(format!("{rev}: {e:#}")))?
-        .object()
-        .git_op()?
-        .peel_to_commit()
-        .git_op()?
-        .id;
+    let id = crate::git::rev_parse(&repo, rev)?.object().git_op()?.peel_to_commit().git_op()?.id;
     Ok(id.to_string())
 }
 
@@ -47,11 +40,7 @@ pub fn show(cwd: &Path, rev: Option<&str>) -> Result<ShowEntry, GitError> {
     let repo = open_repo(cwd)?;
     let rev = rev.unwrap_or("HEAD");
 
-    let object = repo
-        .rev_parse_single(rev)
-        .map_err(|e| GitError::RefNotFound(format!("{rev}: {e:#}")))?
-        .object()
-        .git_op()?;
+    let object = crate::git::rev_parse(&repo, rev)?.object().git_op()?;
     let commit = object.try_into_commit().git_op()?;
     let message = commit.message().git_op()?;
 

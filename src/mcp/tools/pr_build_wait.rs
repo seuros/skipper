@@ -1,8 +1,7 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, mcp_tool,
 };
-use crate::provider::github::{CheckCounts, GitHubProvider, PrCheck};
+use crate::provider::github::{CheckCounts, PrCheck};
 use mcp_host::prelude::structured;
 use serde::Serialize;
 use std::time::Duration;
@@ -70,17 +69,9 @@ impl SkipperServer {
         _ctx: Ctx<'_>,
         params: Parameters<PrBuildWaitParams>,
     ) -> ToolResult {
-        if !self.registry.is_enabled("github") {
-            return Err(ToolError::Execution(
-                "GitHub is not available (gh missing or not logged in)".to_string(),
-            ));
-        }
+        self.require_github()?;
 
-        let gh = GitHubProvider::new();
-        let (repo, pr) = gh
-            .locate_pr(&self.env, params.0.repo.as_deref(), params.0.pr)
-            .await
-            .map_err(cli_error)?;
+        let (gh, repo, pr) = self.locate_pr(params.0.repo.as_deref(), params.0.pr).await?;
         let fail_fast = params.0.fail_fast.unwrap_or(true);
         let timeout = Duration::from_secs(params.0.timeout_secs.unwrap_or(1800).clamp(30, 3600));
         let interval = Duration::from_secs(params.0.poll_secs.unwrap_or(10).clamp(5, 60));

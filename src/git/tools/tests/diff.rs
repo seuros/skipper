@@ -4,9 +4,7 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
 
     let file = dir.join("file.txt");
     fs::write(&file, "one\ntwo\n").expect("write initial file");
@@ -20,11 +18,8 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
     let staged = execute_git_diff_structured(
         dir,
         GitDiffParams {
-            scope: DiffScope::Staged,
-            format: DiffFormat::Patch,
-            check: false,
-            base: None,
             paths: Some(vec!["file.txt".to_string()]),
+            ..diff_params(DiffScope::Staged, DiffFormat::Patch)
         },
     )
     .expect("staged patch");
@@ -35,17 +30,9 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
     assert!(staged_patch.to_string().contains("+staged"));
     assert!(!staged_patch.contains("worktree"));
 
-    let worktree = execute_git_diff_structured(
-        dir,
-        GitDiffParams {
-            scope: DiffScope::Worktree,
-            format: DiffFormat::Stat,
-            check: false,
-            base: None,
-            paths: None,
-        },
-    )
-    .expect("worktree stat");
+    let worktree =
+        execute_git_diff_structured(dir, diff_params(DiffScope::Worktree, DiffFormat::Stat))
+            .expect("worktree stat");
     assert_eq!(worktree["scope"], "worktree");
     assert_eq!(worktree["summary"]["files_changed"], 1);
     assert_eq!(worktree["result"]["format"], "stat");
@@ -55,13 +42,7 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
 
     let all = execute_git_diff_structured(
         dir,
-        GitDiffParams {
-            scope: DiffScope::All,
-            format: DiffFormat::NameOnly,
-            check: true,
-            base: None,
-            paths: None,
-        },
+        GitDiffParams { check: true, ..diff_params(DiffScope::All, DiffFormat::NameOnly) },
     )
     .expect("all changed paths");
     assert_eq!(all["base"], "HEAD");
@@ -74,11 +55,8 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
     let error = execute_git_diff_structured(
         dir,
         GitDiffParams {
-            scope: DiffScope::Worktree,
-            format: DiffFormat::NameOnly,
-            check: false,
             base: Some("HEAD".to_string()),
-            paths: None,
+            ..diff_params(DiffScope::Worktree, DiffFormat::NameOnly)
         },
     )
     .expect_err("worktree base must be rejected");
@@ -95,31 +73,14 @@ fn execute_git_diff_name_only_skips_oversized_blob_content() {
     fs::write(dir.join("generated.txt"), large).expect("write large file");
     git(dir, &["add", "generated.txt"]);
 
-    let names = execute_git_diff_structured(
-        dir,
-        GitDiffParams {
-            scope: DiffScope::Staged,
-            format: DiffFormat::NameOnly,
-            check: false,
-            base: None,
-            paths: None,
-        },
-    )
-    .expect("name-only should not load blob content");
+    let names =
+        execute_git_diff_structured(dir, diff_params(DiffScope::Staged, DiffFormat::NameOnly))
+            .expect("name-only should not load blob content");
     assert_eq!(names["result"]["paths"], serde_json::json!(["generated.txt"]));
     assert!(!names["summary"].as_object().expect("summary object").contains_key("insertions"));
 
-    let error = execute_git_diff_structured(
-        dir,
-        GitDiffParams {
-            scope: DiffScope::Staged,
-            format: DiffFormat::Patch,
-            check: false,
-            base: None,
-            paths: None,
-        },
-    )
-    .expect_err("patch generation must reject oversized content");
+    let error = execute_git_diff_structured(dir, diff_params(DiffScope::Staged, DiffFormat::Patch))
+        .expect_err("patch generation must reject oversized content");
     assert!(error.to_string().contains("per-file limit"));
     assert!(error.to_string().contains("generated.txt"));
 }
@@ -129,9 +90,7 @@ fn execute_git_diff_all_filters_staged_changes_undone_in_worktree() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir);
     fs::write(dir.join("file.txt"), "head\n").expect("write initial file");
     git(dir, &["add", "file.txt"]);
     git(dir, &["commit", "-m", "initial"]);
@@ -140,17 +99,8 @@ fn execute_git_diff_all_filters_staged_changes_undone_in_worktree() {
     git(dir, &["add", "file.txt"]);
     fs::write(dir.join("file.txt"), "head\n").expect("restore head content");
 
-    let all = execute_git_diff_structured(
-        dir,
-        GitDiffParams {
-            scope: DiffScope::All,
-            format: DiffFormat::NameOnly,
-            check: false,
-            base: None,
-            paths: None,
-        },
-    )
-    .expect("all diff");
+    let all = execute_git_diff_structured(dir, diff_params(DiffScope::All, DiffFormat::NameOnly))
+        .expect("all diff");
     assert_eq!(all["result"]["paths"], serde_json::json!([]));
     assert_eq!(all["summary"]["files_changed"], 0);
 }

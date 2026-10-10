@@ -106,23 +106,12 @@ fn commit_inner(
     let mut editor =
         repo.edit_tree(repo.empty_tree().id).map_err(|e| GitError::Operation(format!("{e:#}")))?;
     for entry in index.entries() {
-        let kind = match entry.mode {
-            mode if mode == gix::index::entry::Mode::FILE => gix::objs::tree::EntryKind::Blob,
-            mode if mode == gix::index::entry::Mode::FILE_EXECUTABLE => {
-                gix::objs::tree::EntryKind::BlobExecutable
-            }
-            mode if mode == gix::index::entry::Mode::SYMLINK => gix::objs::tree::EntryKind::Link,
-            mode if mode == gix::index::entry::Mode::COMMIT => gix::objs::tree::EntryKind::Commit,
-            mode if mode == gix::index::entry::Mode::DIR => {
-                return Err(GitError::Unsupported("sparse indexes are not supported".to_string()));
-            }
-            _ => {
-                return Err(GitError::Unsupported(format!(
-                    "unsupported index mode for {}",
-                    entry.path(&index)
-                )));
-            }
-        };
+        if entry.mode.is_sparse() {
+            return Err(GitError::Unsupported("sparse indexes are not supported".to_string()));
+        }
+        let kind = entry.mode.to_tree_entry_mode().map(|mode| mode.kind()).ok_or_else(|| {
+            GitError::Unsupported(format!("unsupported index mode for {}", entry.path(&index)))
+        })?;
         editor
             .upsert(entry.path(&index), kind, entry.id)
             .map_err(|e| GitError::Operation(format!("{e:#}")))?;
@@ -325,23 +314,20 @@ fn collect_staged_paths(
         gix::status::tree_index::TrackRenames::Disabled,
         |change, _, _| {
             use gix::diff::index::ChangeRef;
-            let (path, is_submodule_change) = match change {
+            let (location, before, after) = match change {
                 ChangeRef::Addition { location, entry_mode, .. }
                 | ChangeRef::Deletion { location, entry_mode, .. } => {
-                    (location.to_string(), entry_mode == gix::index::entry::Mode::COMMIT)
+                    (location, entry_mode, entry_mode)
                 }
-                ChangeRef::Modification { location, previous_entry_mode, entry_mode, .. } => (
-                    location.to_string(),
-                    previous_entry_mode == gix::index::entry::Mode::COMMIT
-                        || entry_mode == gix::index::entry::Mode::COMMIT,
-                ),
-                ChangeRef::Rewrite { location, source_entry_mode, entry_mode, .. } => (
-                    location.to_string(),
-                    source_entry_mode == gix::index::entry::Mode::COMMIT
-                        || entry_mode == gix::index::entry::Mode::COMMIT,
-                ),
+                ChangeRef::Modification { location, previous_entry_mode, entry_mode, .. } => {
+                    (location, previous_entry_mode, entry_mode)
+                }
+                ChangeRef::Rewrite { location, source_entry_mode, entry_mode, .. } => {
+                    (location, source_entry_mode, entry_mode)
+                }
             };
-            if is_submodule_change {
+            let path = location.to_string();
+            if before.is_submodule() || after.is_submodule() {
                 changed_submodule = Some(path);
                 return Ok(ControlFlow::Break(()));
             }

@@ -1,16 +1,10 @@
-use std::process::Command;
-
 use tempfile::tempdir;
 
 use super::*;
+use crate::git::test_support::git;
 
 fn remotes(names: &[&str]) -> BTreeMap<String, String> {
     names.iter().map(|n| ((*n).to_string(), format!("https://example.com/{n}/repo.git"))).collect()
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git").args(args).current_dir(dir).output().expect("run git");
-    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]

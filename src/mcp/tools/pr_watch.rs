@@ -1,6 +1,5 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, mcp_tool,
 };
 use crate::pr_watch::{EventKind, EventKinds, PrEvent, PrSnapshot};
 use mcp_host::prelude::structured;
@@ -45,11 +44,7 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
     )]
     async fn pr_watch(&self, _ctx: Ctx<'_>, params: Parameters<PrWatchParams>) -> ToolResult {
-        if !self.registry.is_enabled("github") {
-            return Err(ToolError::Execution(
-                "GitHub CLI is not available (missing or unauthenticated)".to_string(),
-            ));
-        }
+        self.require_github()?;
 
         let until = params.0.until.map_or(EventKinds::ALL, EventKinds::from_iter);
         let (pr, _) = self

@@ -4,16 +4,7 @@ use std::process::Command;
 use tempfile::tempdir;
 
 use super::*;
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git").args(args).current_dir(dir).output().expect("run git");
-    assert!(
-        output.status.success(),
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+use crate::git::test_support::{git, repo_with_commit};
 
 /// Whether `refs/heads/{name}` exists, as git itself sees it.
 fn has_branch(dir: &Path, name: &str) -> bool {
@@ -25,19 +16,10 @@ fn has_branch(dir: &Path, name: &str) -> bool {
         .success()
 }
 
-fn init_repo(dir: &Path) {
-    git(dir, &["init", "-b", "main"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    fs::write(dir.join("file.txt"), "initial\n").expect("write file");
-    git(dir, &["add", "file.txt"]);
-    git(dir, &["commit", "-m", "initial"]);
-}
-
 #[test]
 fn create_does_not_checkout_and_delete_removes_merged_branch() {
     let temp = tempdir().expect("tempdir");
-    init_repo(temp.path());
+    repo_with_commit(temp.path(), "initial\n");
 
     let created = create(temp.path(), "topic", None).expect("create branch");
     assert_eq!(created.operation, "create");
@@ -52,7 +34,7 @@ fn create_does_not_checkout_and_delete_removes_merged_branch() {
 #[test]
 fn delete_rejects_unmerged_branch_without_force() {
     let temp = tempdir().expect("tempdir");
-    init_repo(temp.path());
+    repo_with_commit(temp.path(), "initial\n");
     git(temp.path(), &["switch", "-c", "topic"]);
     fs::write(temp.path().join("topic.txt"), "topic\n").expect("write topic");
     git(temp.path(), &["add", "topic.txt"]);
@@ -70,7 +52,7 @@ fn delete_rejects_branch_checked_out_in_linked_worktree() {
     let repo = temp.path().join("repo");
     let worktree = temp.path().join("worktree");
     fs::create_dir(&repo).expect("create repo");
-    init_repo(&repo);
+    repo_with_commit(&repo, "initial\n");
     create(&repo, "topic", None).expect("create topic");
     git(&repo, &["worktree", "add", worktree.to_str().expect("utf8 worktree"), "topic"]);
 
@@ -81,7 +63,7 @@ fn delete_rejects_branch_checked_out_in_linked_worktree() {
 #[test]
 fn rejects_full_reference_names() {
     let temp = tempdir().expect("tempdir");
-    init_repo(temp.path());
+    repo_with_commit(temp.path(), "initial\n");
     let error = create(temp.path(), "refs/heads/topic", None).expect_err("reject full name");
     assert!(error.to_string().contains("short local name"));
 }

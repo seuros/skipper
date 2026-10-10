@@ -2,7 +2,7 @@ use super::{
     Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
     mcp_tool,
 };
-use crate::provider::github::{GitHubProvider, PrOverview};
+use crate::provider::github::PrOverview;
 use mcp_host::prelude::structured;
 use serde::Serialize;
 
@@ -37,11 +37,7 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some() && e.get_custom(\"writes\").is_some()).unwrap_or(false)"
     )]
     async fn pr_merge(&self, ctx: Ctx<'_>, params: Parameters<PrMergeParams>) -> ToolResult {
-        let gh = GitHubProvider::new();
-        let (repo, number) = gh
-            .locate_pr(&self.env, params.0.repo.as_deref(), params.0.pr)
-            .await
-            .map_err(cli_error)?;
+        let (gh, repo, number) = self.locate_pr(params.0.repo.as_deref(), params.0.pr).await?;
         let pr = gh.pr_overview(&repo, number).await.map_err(cli_error)?;
         let method = merge_method(&pr, params.0.method.as_deref())?;
 

@@ -1,6 +1,4 @@
-use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, mcp_tool,
-};
+use super::{Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, mcp_tool};
 use crate::git::SyncOutcome;
 use mcp_host::prelude::structured;
 use serde::Serialize;
@@ -30,9 +28,7 @@ impl SkipperServer {
     async fn git_fetch(&self, _ctx: Ctx<'_>, params: Parameters<GitFetchParams>) -> ToolResult {
         use crate::environment::Environment as _;
 
-        let fetched = crate::git::fetch(self.env.cwd(), params.0.remote.as_deref())
-            .await
-            .map_err(|e| ToolError::from(crate::git::tools::GitToolError::from(e)))?;
+        let fetched = crate::git::fetch(self.env.cwd(), params.0.remote.as_deref()).await?;
         structured(GitFetchResult { fetched })
     }
 }

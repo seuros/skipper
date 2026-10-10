@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::runs::repo_path;
-use super::{GitHubProvider, PrState, lowercase, rest_url};
+use super::{GitHubProvider, Label, Nodes, PrState, label_names, lowercase, rest_url};
 use crate::error::{CliError, Result};
 use crate::workspace::ForgeRepo;
 
@@ -305,11 +305,6 @@ struct OverviewPull {
     labels: Option<Nodes<Label>>,
 }
 
-#[derive(Deserialize)]
-struct Label {
-    name: String,
-}
-
 /// GraphQL variables naming one PR.
 #[derive(Serialize)]
 pub(super) struct PrVariables<'a> {
@@ -344,21 +339,13 @@ impl OverviewPull {
                 .map(|(method, _)| *method)
                 .collect(),
             default_method: lowercase(repo.viewer_default_merge_method),
-            labels: self
-                .labels
-                .map(|l| l.nodes.into_iter().map(|l| l.name).collect())
-                .unwrap_or_default(),
+            labels: label_names(self.labels),
             additions: self.additions,
             deletions: self.deletions,
             changed_files: self.changed_files,
             merged_at: self.merged_at,
         }
     }
-}
-
-#[derive(Deserialize)]
-pub(super) struct Nodes<T> {
-    pub nodes: Vec<T>,
 }
 
 #[derive(Deserialize)]

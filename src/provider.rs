@@ -178,13 +178,7 @@ where
 {
     use chrono_machines::{AsyncRetryable, RetryOutcome};
 
-    let backoff = ExponentialBackoff::new()
-        .base_delay_ms(1_000)
-        .multiplier(2.0)
-        .max_delay_ms(4_000)
-        .max_attempts(RETRY_ATTEMPTS)
-        .jitter_factor(0.5);
-    call.retry_async(backoff)
+    call.retry_async(network_backoff(RETRY_ATTEMPTS))
         .when(retryable)
         .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
         .await
@@ -304,6 +298,17 @@ impl<P: Provider> ProviderExt for P {
         let output = self.execute(args).await?;
         output.json(self.cli())
     }
+}
+
+/// Retry delays for a network call: ~1s doubling to 4s, jittered, at most
+/// `attempts` tries in all.
+pub(crate) fn network_backoff(attempts: u8) -> ExponentialBackoff {
+    ExponentialBackoff::new()
+        .base_delay_ms(1_000)
+        .multiplier(2.0)
+        .max_delay_ms(4_000)
+        .max_attempts(attempts)
+        .jitter_factor(0.5)
 }
 
 /// Re-probe delays for unreachable providers: ~5s doubling to a 60s cap,
