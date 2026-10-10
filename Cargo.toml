@@ -34,8 +34,8 @@ rama = { version = "0.4.0", default-features = false, features = ["std", "http",
 serde_yaml_ng = "0.10"
 similar = "3.2.0"
 url = "2.5.8"
-chrono-machines = { version = "0.8", features = ["async"] }
-throttle-machines = "0.2"
+chrono-machines = { version = "0.8.1", features = ["async"] }
+throttle-machines = "0.2.1"
 tracing-subscriber = "0.3"
 gix = { version = "=0.89.0", features = ["max-performance-safe", "blob-diff", "status", "revision", "blame", "command"] }
 
