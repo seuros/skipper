@@ -13,27 +13,42 @@ fn execute_git_log_sizes_by_history_not_by_limit() {
 }
 
 #[test]
-fn execute_git_blame_includes_head_author_placeholder() {
+fn execute_git_blame_attributes_each_line_to_its_commit() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
-    repo_with_commit(dir, "alpha\nbeta\n");
+    repo_with_commit(dir, "alpha\nbeta\ngamma\n");
+    fs::write(dir.join("file.txt"), "alpha\nBETA\ngamma\n").expect("write file");
+    git(dir, &["-c", "user.name=Second Author", "commit", "-q", "-am", "second"]);
+    let short = |rev: &str| git_output(dir, &["rev-parse", "--short=8", rev]).trim().to_owned();
+    let (first, second) = (short("HEAD~1"), short("HEAD"));
 
-    let blame_json = execute_git_blame_structured(
-        dir,
-        GitBlameParams {
-            file_path: "file.txt".to_string(),
-            start_line: Some(1),
-            end_line: Some(1),
-        },
-    )
-    .expect("blame");
+    let blame = |start_line, end_line| -> Vec<BlameLine> {
+        let params = GitBlameParams { file_path: "file.txt".to_string(), start_line, end_line };
+        let json = execute_git_blame_structured(dir, params).expect("blame");
+        serde_json::from_value(json["lines"].clone()).expect("parse blame json")
+    };
+    let owners = |lines: &[BlameLine]| {
+        lines
+            .iter()
+            .map(|l| (l.line_no, l.content.clone(), l.author.to_string(), l.sha.to_string()))
+            .collect::<Vec<_>>()
+    };
+    let line = |n, content: &str, author: &str, sha: &str| {
+        (n, content.to_owned(), author.to_owned(), sha.to_owned())
+    };
 
-    let blamed: Vec<BlameLine> =
-        serde_json::from_value(blame_json["lines"].clone()).expect("parse blame json");
-    assert_eq!(blamed.len(), 1);
-    assert_eq!(&*blamed[0].author, "Test User");
-    assert_eq!(blamed[0].content, "alpha");
-    assert_eq!(blamed[0].sha.len(), 8);
+    assert_eq!(
+        owners(&blame(None, None)),
+        [
+            line(1, "alpha", "Test User", &first),
+            line(2, "BETA", "Second Author", &second),
+            line(3, "gamma", "Test User", &first),
+        ]
+    );
+    // A range blames those lines only; past the end there is nothing.
+    assert_eq!(owners(&blame(Some(2), Some(3)))[0], line(2, "BETA", "Second Author", &second));
+    assert_eq!(blame(Some(2), Some(3)).len(), 2);
+    assert!(blame(Some(10), Some(12)).is_empty());
 }
 
 #[test]

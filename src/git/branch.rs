@@ -80,8 +80,12 @@ pub fn delete(cwd: &Path, name: &str, force: bool) -> Result<BranchMutationResul
 
     if !force {
         let head_id = repo.head_commit().git_op()?.id().detach();
-        let merge_base = repo.merge_base(branch_id, head_id).git_op()?.detach();
-        if merge_base != branch_id {
+        // No merge base at all (unrelated histories) is not merged either.
+        let merged = repo
+            .merge_base(branch_id, head_id)
+            .git_op()?
+            .is_some_and(|base| base.detach() == branch_id);
+        if !merged {
             return Err(GitError::Operation(format!(
                 "branch {name:?} is not fully merged into HEAD; pass force=true to delete it"
             )));
