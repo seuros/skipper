@@ -247,10 +247,16 @@ pub trait Provider: Send + Sync {
         Box::pin(executor::execute_success(self.cli(), args, Duration::from_secs(30)))
     }
 
+    /// What this forge's CI calls run against, resolved once per tool call
+    /// so a polling watch does not resolve it again on every poll.
+    fn ci_target(&self, _env: &crate::environment::SkipperEnvironment) -> Result<CiTarget> {
+        Ok(CiTarget::Workspace)
+    }
+
     /// Recent CI runs of the workspace's repo on this forge.
     fn ci_runs<'a>(
         &'a self,
-        _env: &'a crate::environment::SkipperEnvironment,
+        _target: &'a CiTarget,
         _limit: usize,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI run listing")) })
@@ -259,20 +265,31 @@ pub trait Provider: Send + Sync {
     /// Every run of commit `sha` (full id), newest first.
     fn ci_runs_for_commit<'a>(
         &'a self,
-        _env: &'a crate::environment::SkipperEnvironment,
+        _target: &'a CiTarget,
         _sha: &'a str,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI runs by commit")) })
     }
 
-    /// Run `id`, or the latest run of the current branch.
+    /// Run `id`, or the latest run of the branch checked out in `env`.
     fn ci_run<'a>(
         &'a self,
         _env: &'a crate::environment::SkipperEnvironment,
+        _target: &'a CiTarget,
         _id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<BuildRun>> {
         Box::pin(async move { Err(CliError::unsupported(self.cli(), "CI run status")) })
     }
+}
+
+/// See [`Provider::ci_target`].
+#[derive(Debug, Clone)]
+pub enum CiTarget {
+    /// The forge repository an API call names (GitHub).
+    #[cfg(feature = "github")]
+    Repo(crate::workspace::ForgeRepo),
+    /// The CLI reads the workspace itself (glab).
+    Workspace,
 }
 
 pub trait ProviderExt: Provider {

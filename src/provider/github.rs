@@ -1,7 +1,7 @@
 use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::error::{CliError, Result};
 use crate::executor::{self};
-use crate::provider::{BoxFuture, BuildRun, Provider, is_zero, retryable, retrying};
+use crate::provider::{BoxFuture, BuildRun, CiTarget, Provider, is_zero, retryable, retrying};
 use crate::version::minimum;
 use crate::workspace::ForgeRepo;
 use schemars::JsonSchema;
@@ -105,46 +105,54 @@ impl Provider for GitHubProvider {
         })
     }
 
+    fn ci_target(&self, env: &SkipperEnvironment) -> Result<CiTarget> {
+        Ok(CiTarget::Repo(crate::workspace::forge_repo_on(env, "github")?))
+    }
+
     fn ci_runs<'a>(
         &'a self,
-        env: &'a SkipperEnvironment,
+        target: &'a CiTarget,
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
-        Box::pin(async move {
-            let repo = crate::workspace::forge_repo_on(env, "github")?;
-            self.runs(&repo, None, limit).await
-        })
+        Box::pin(async move { self.runs(repo_of(target)?, None, limit).await })
     }
 
     fn ci_runs_for_commit<'a>(
         &'a self,
-        env: &'a SkipperEnvironment,
+        target: &'a CiTarget,
         sha: &'a str,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
-        Box::pin(async move {
-            let repo = crate::workspace::forge_repo_on(env, "github")?;
-            self.commit_runs(&repo, sha).await
-        })
+        Box::pin(async move { self.commit_runs(repo_of(target)?, sha).await })
     }
 
     fn ci_run<'a>(
         &'a self,
         env: &'a SkipperEnvironment,
+        target: &'a CiTarget,
         id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<BuildRun>> {
         Box::pin(async move {
-            let repo = crate::workspace::forge_repo_on(env, "github")?;
+            let repo = repo_of(target)?;
             if let Some(id) = id {
-                return self.run(&repo, id).await;
+                return self.run(repo, id).await;
             }
             let branch = crate::git::current_branch(env.cwd()).ok().flatten();
-            self.runs(&repo, branch.as_deref(), 1).await?.pop().ok_or_else(|| {
+            self.runs(repo, branch.as_deref(), 1).await?.pop().ok_or_else(|| {
                 CliError::no_target(match &branch {
                     Some(branch) => format!("no CI runs for {branch} in {}", repo.full_name()),
                     None => format!("no CI runs in {}", repo.full_name()),
                 })
             })
         })
+    }
+}
+
+/// The repo [`GitHubProvider::ci_target`] resolved; a target from another
+/// forge is a caller's mistake.
+fn repo_of(target: &CiTarget) -> Result<&ForgeRepo> {
+    match target {
+        CiTarget::Repo(repo) => Ok(repo),
+        CiTarget::Workspace => Err(CliError::no_target("no GitHub repository resolved for CI")),
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::provider::{BoxFuture, BuildRun, Provider, ProviderExt};
+use crate::provider::{BoxFuture, BuildRun, CiTarget, Provider, ProviderExt};
 use crate::version::minimum;
 use semver::Version;
 use serde::Deserialize;
@@ -39,7 +39,7 @@ impl Provider for GitLabProvider {
 
     fn ci_runs<'a>(
         &'a self,
-        _env: &'a crate::environment::SkipperEnvironment,
+        _target: &'a CiTarget,
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<BuildRun>>> {
         Box::pin(async move {
@@ -54,6 +54,7 @@ impl Provider for GitLabProvider {
     fn ci_run<'a>(
         &'a self,
         _env: &'a crate::environment::SkipperEnvironment,
+        _target: &'a CiTarget,
         id: Option<&'a str>,
     ) -> BoxFuture<'a, Result<BuildRun>> {
         Box::pin(async move {

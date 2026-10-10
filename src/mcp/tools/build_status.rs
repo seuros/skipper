@@ -27,15 +27,14 @@ impl SkipperServer {
         params: Parameters<BuildStatusParams>,
     ) -> ToolResult {
         let provider = self.ci_provider(params.0.provider.as_deref())?;
+        let target = provider.ci_target(&self.env).map_err(cli_error)?;
 
         if let Some(id) = params.0.run_id {
-            let run = provider.ci_run(&self.env, Some(&id)).await.map_err(cli_error)?;
+            let run = provider.ci_run(&self.env, &target, Some(&id)).await.map_err(cli_error)?;
             json_output(&run)
         } else {
-            let runs = provider
-                .ci_runs(&self.env, params.0.limit.unwrap_or(10))
-                .await
-                .map_err(cli_error)?;
+            let runs =
+                provider.ci_runs(&target, params.0.limit.unwrap_or(10)).await.map_err(cli_error)?;
             json_output(&runs)
         }
     }

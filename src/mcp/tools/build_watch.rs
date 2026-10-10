@@ -69,8 +69,11 @@ impl SkipperServer {
             return self.watch_commit(provider.as_ref(), &rev, wait, interval).await;
         }
 
-        let initial =
-            provider.ci_run(&self.env, params.run_id.as_deref()).await.map_err(cli_error)?;
+        let target = provider.ci_target(&self.env).map_err(cli_error)?;
+        let initial = provider
+            .ci_run(&self.env, &target, params.run_id.as_deref())
+            .await
+            .map_err(cli_error)?;
         if initial.is_terminal() {
             return structured(BuildWatchResult::run(initial, false, 0));
         }
@@ -83,7 +86,8 @@ impl SkipperServer {
             let remaining = deadline - Instant::now();
             tokio::time::sleep(interval.min(remaining)).await;
 
-            current = provider.ci_run(&self.env, Some(&current.id)).await.map_err(cli_error)?;
+            current =
+                provider.ci_run(&self.env, &target, Some(&current.id)).await.map_err(cli_error)?;
             if current.status != initial_status {
                 break;
             }
@@ -109,13 +113,14 @@ impl SkipperServer {
         let start = Instant::now();
         let deadline = start + wait;
 
-        let initial = provider.ci_runs_for_commit(&self.env, &sha).await.map_err(cli_error)?;
+        let target = provider.ci_target(&self.env).map_err(cli_error)?;
+        let initial = provider.ci_runs_for_commit(&target, &sha).await.map_err(cli_error)?;
         // Polled runs, kept apart from `initial` to tell whether they moved.
         let mut latest: Option<Vec<BuildRun>> = None;
         while !all_finished(latest.as_deref().unwrap_or(&initial)) && Instant::now() < deadline {
             let remaining = deadline - Instant::now();
             tokio::time::sleep(interval.min(remaining)).await;
-            latest = Some(provider.ci_runs_for_commit(&self.env, &sha).await.map_err(cli_error)?);
+            latest = Some(provider.ci_runs_for_commit(&target, &sha).await.map_err(cli_error)?);
         }
         let changed = latest.as_ref().is_some_and(|runs| *runs != initial);
         let runs = latest.unwrap_or(initial);
