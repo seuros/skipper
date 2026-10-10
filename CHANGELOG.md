@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0](https://github.com/seuros/skipper/compare/skipper-v0.7.1...skipper-v0.8.0) (2026-10-10)
+
+
+### Features
+
+* blame each line to the commit that last changed it ([2edbbd6](https://github.com/seuros/skipper/commit/2edbbd615b3b9b103b3aebc2cb8cf1ddcf67a167))
+* sign commits when commit.gpgsign is set ([f9dfa94](https://github.com/seuros/skipper/commit/f9dfa94df7c1ef2750ca3764194be726a7a8cb3b))
+
+
+### Bug Fixes
+
+* bound git_log's buffer, version parsing past non-ASCII, structured repo_search ([445cdab](https://github.com/seuros/skipper/commit/445cdabdf00781d72d95ace1c7c14f0d66033d46))
+* honour [providers.&lt;forge&gt;] disabled; drop config skipper never read ([911f651](https://github.com/seuros/skipper/commit/911f651d106f5458f2a91e806ec277ce8b725449))
+
+
+### Performance Improvements
+
+* answer visibility predicates with has_custom ([cce6bef](https://github.com/seuros/skipper/commit/cce6befa645df0dd83766432578d77b9499512e8))
+* resolve the CI target once per build watch ([cc80cb6](https://github.com/seuros/skipper/commit/cc80cb6a6226638db798640a4c2ba1eb0d7340df))
+* stop copying what can be moved, borrowed or shared ([80df6ed](https://github.com/seuros/skipper/commit/80df6edfe3e664dddba72f22ee89e6c1be83794d))
+
 ## [0.7.1](https://github.com/seuros/skipper/compare/skipper-v0.7.0...skipper-v0.7.1) (2026-10-04)
 
 
