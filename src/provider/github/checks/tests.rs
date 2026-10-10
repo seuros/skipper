@@ -22,7 +22,7 @@ fn test_rollup_keeps_latest_attempt_and_buckets_like_gh() {
 
     let checks = latest(contexts);
     let summary: Vec<(&str, &str, &str)> =
-        checks.iter().map(|c| (c.workflow.as_str(), c.name.as_str(), c.bucket.as_str())).collect();
+        checks.iter().map(|c| (c.workflow.as_str(), c.name.as_str(), c.bucket)).collect();
     assert_eq!(
         summary,
         [

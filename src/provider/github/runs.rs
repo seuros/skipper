@@ -1,8 +1,10 @@
 //! Actions workflow runs and the account's repositories, over REST.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
-use super::GitHubProvider;
+use super::{GitHubProvider, rest_url};
 use crate::error::Result;
 use crate::provider::BuildRun;
 use crate::workspace::ForgeRepo;
@@ -19,12 +21,19 @@ impl GitHubProvider {
         struct Runs {
             workflow_runs: Vec<WorkflowRun>,
         }
-        let mut path =
-            format!("{}/actions/runs?per_page={}", repo_path(repo), limit.clamp(1, super::PAGE));
-        if let Some(branch) = branch {
-            path.push_str(&format!("&branch={}", urlencoding::encode(branch)));
-        }
-        let runs: Runs = self.api_json_at(&repo.host, &path).await?;
+        let branch = fmt::from_fn(|f| match branch {
+            Some(branch) => write!(f, "&branch={}", urlencoding::encode(branch)),
+            None => Ok(()),
+        });
+        let url = rest_url(
+            &repo.host,
+            format_args!(
+                "{}/actions/runs?per_page={}{branch}",
+                repo_path(repo),
+                limit.clamp(1, super::PAGE)
+            ),
+        );
+        let runs: Runs = self.api_json_at(&repo.host, &url).await?;
         Ok(runs.workflow_runs.into_iter().map(Into::into).collect())
     }
 
@@ -34,19 +43,25 @@ impl GitHubProvider {
         struct Runs {
             workflow_runs: Vec<WorkflowRun>,
         }
-        let path = format!(
-            "{}/actions/runs?head_sha={}&per_page={}",
-            repo_path(repo),
-            urlencoding::encode(sha),
-            super::PAGE
+        let url = rest_url(
+            &repo.host,
+            format_args!(
+                "{}/actions/runs?head_sha={}&per_page={}",
+                repo_path(repo),
+                urlencoding::encode(sha),
+                super::PAGE
+            ),
         );
-        let runs: Runs = self.api_json_at(&repo.host, &path).await?;
+        let runs: Runs = self.api_json_at(&repo.host, &url).await?;
         Ok(runs.workflow_runs.into_iter().map(Into::into).collect())
     }
 
     pub async fn run(&self, repo: &ForgeRepo, id: &str) -> Result<BuildRun> {
-        let path = format!("{}/actions/runs/{}", repo_path(repo), urlencoding::encode(id));
-        let run: WorkflowRun = self.api_json_at(&repo.host, &path).await?;
+        let url = rest_url(
+            &repo.host,
+            format_args!("{}/actions/runs/{}", repo_path(repo), urlencoding::encode(id)),
+        );
+        let run: WorkflowRun = self.api_json_at(&repo.host, &url).await?;
         Ok(run.into())
     }
 
@@ -58,11 +73,14 @@ impl GitHubProvider {
             owner: super::User,
             description: Option<String>,
         }
-        let path = format!(
-            "user/repos?affiliation=owner&sort=pushed&per_page={}",
-            limit.clamp(1, super::PAGE)
+        let url = rest_url(
+            host,
+            format_args!(
+                "user/repos?affiliation=owner&sort=pushed&per_page={}",
+                limit.clamp(1, super::PAGE)
+            ),
         );
-        let repos: Vec<Repo> = self.api_json_at(host, &path).await?;
+        let repos: Vec<Repo> = self.api_json_at(host, &url).await?;
         Ok(repos
             .into_iter()
             .map(|r| OwnedRepo { name: r.name, owner: r.owner.login, description: r.description })
@@ -70,8 +88,11 @@ impl GitHubProvider {
     }
 }
 
-fn repo_path(repo: &ForgeRepo) -> String {
-    format!("repos/{}/{}", urlencoding::encode(&repo.owner), urlencoding::encode(&repo.name))
+/// `repos/{owner}/{name}`, written straight into the URL being built.
+pub(super) fn repo_path(repo: &ForgeRepo) -> impl fmt::Display + '_ {
+    fmt::from_fn(move |f| {
+        write!(f, "repos/{}/{}", urlencoding::encode(&repo.owner), urlencoding::encode(&repo.name))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,7 +122,7 @@ impl From<WorkflowRun> for BuildRun {
         let status = match run.status.as_str() {
             "completed" => match run.conclusion.as_deref() {
                 Some("success") => "success",
-                Some("failure") | Some("startup_failure") | Some("timed_out") => "failure",
+                Some("failure" | "startup_failure" | "timed_out") => "failure",
                 Some("cancelled") => "cancelled",
                 Some("skipped") => "skipped",
                 _ => "completed",
@@ -111,9 +132,9 @@ impl From<WorkflowRun> for BuildRun {
             _ => "unknown",
         };
 
-        BuildRun {
+        Self {
             id: run.id.to_string(),
-            status: status.to_string(),
+            status,
             branch: run.head_branch,
             workflow: run.name,
             title: run.display_title,

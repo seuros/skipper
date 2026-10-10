@@ -1,7 +1,6 @@
 mod add;
 mod blame;
 mod branch;
-mod branches;
 mod commit;
 mod diff;
 mod error;
@@ -22,7 +21,6 @@ pub use blame::blame;
 pub use branch::BranchMutationResult;
 pub use branch::create as create_branch;
 pub use branch::delete as delete_branch;
-pub use branches::BranchInfo;
 pub use commit::CommitResult;
 pub use commit::amend;
 pub use commit::amend_with_trailers;
@@ -51,6 +49,7 @@ pub use show::ShowEntry;
 pub use show::commit_id;
 pub use show::show;
 pub use status::FileStatus;
+pub use status::StatusCounts;
 pub use status::StatusInfo;
 pub use sync::PushPlan;
 pub use sync::SyncOutcome;
@@ -69,17 +68,33 @@ pub fn repo_info(cwd: &Path) -> Result<RepoInfo, GitError> {
     repo::info(cwd)
 }
 
-pub fn repo_root(cwd: &Path) -> Result<std::path::PathBuf, GitError> {
-    let repo = open_repo(cwd)?;
-    Ok(repo.workdir().unwrap_or_else(|| repo.git_dir()).to_path_buf())
+/// [`repo_info`] and every remote, from one open of the repository.
+pub fn repo_info_with_remotes(
+    cwd: &Path,
+) -> Result<(RepoInfo, std::collections::BTreeMap<String, String>), GitError> {
+    repo::info_with_remotes(cwd)
 }
 
 pub fn status(cwd: &Path) -> Result<StatusInfo, GitError> {
     status::collect(cwd)
 }
 
-pub fn branches(cwd: &Path) -> Result<BranchInfo, GitError> {
-    branches::collect(cwd)
+pub fn status_counts(cwd: &Path) -> Result<StatusCounts, GitError> {
+    status::counts(cwd)
+}
+
+pub fn is_clean(cwd: &Path) -> Result<bool, GitError> {
+    status::is_clean(cwd)
+}
+
+pub fn has_staged(cwd: &Path) -> Result<bool, GitError> {
+    status::has_staged(cwd)
+}
+
+/// The checked-out branch; `None` on a detached HEAD. Reads HEAD alone,
+/// where [`repo_info`] also walks the worktree and the remotes.
+pub fn current_branch(cwd: &Path) -> Result<Option<String>, GitError> {
+    Ok(repo::head_branch(&open_repo(cwd)?))
 }
 
 pub fn remotes(cwd: &Path) -> Result<RemoteInfo, GitError> {
@@ -90,6 +105,11 @@ pub fn remotes(cwd: &Path) -> Result<RemoteInfo, GitError> {
 /// else `origin`. `None` when several remotes leave it open.
 pub fn current_remote(cwd: &Path) -> Result<Option<CurrentRemote>, GitError> {
     remotes::current(cwd)
+}
+
+/// [`remotes`] and [`current_remote`] from one open of the repository.
+pub fn remotes_with_current(cwd: &Path) -> Result<(RemoteInfo, Option<CurrentRemote>), GitError> {
+    remotes::with_current(cwd)
 }
 
 pub struct GitServer;

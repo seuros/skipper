@@ -2,15 +2,15 @@ use crate::git::GitServer;
 use mcp_host::prelude::*;
 
 fn in_repo(ctx: &VisibilityContext) -> bool {
-    ctx.environment.map(|e| e.has_git_repo()).unwrap_or(false)
+    ctx.environment.is_some_and(mcp_host::prelude::Environment::has_git_repo)
 }
 
 fn dirty_tree(ctx: &VisibilityContext) -> bool {
-    ctx.environment.map(|e| e.has_git_repo() && !e.git_is_clean()).unwrap_or(false)
+    ctx.environment.is_some_and(|e| e.has_git_repo() && !e.git_is_clean())
 }
 
 fn has_staged(ctx: &VisibilityContext) -> bool {
-    ctx.environment.map(|e| e.has_git_repo() && e.git_has_staged()).unwrap_or(false)
+    ctx.environment.is_some_and(|e| e.has_git_repo() && e.git_has_staged())
 }
 
 #[must_use]

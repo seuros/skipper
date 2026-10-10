@@ -13,6 +13,7 @@ impl<T, E: std::fmt::Display> GitResultExt<T> for Result<T, E> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct RepoRelativePathMessages {
     pub empty: &'static str,
     pub nul: &'static str,
@@ -38,14 +39,22 @@ pub(crate) fn normalize_repo_relative_path(
         )));
     }
 
-    let mut components = Vec::new();
+    // Components are written straight into the result, `/`-joined.
+    let mut normalized = String::with_capacity(raw.len());
+    let mut in_git_dir = false;
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::Normal(component) => {
-                components.push(component.to_str().ok_or_else(|| {
+                let component = component.to_str().ok_or_else(|| {
                     GitError::InvalidInput(format!("path is not valid UTF-8: {raw}"))
-                })?);
+                })?;
+                if normalized.is_empty() {
+                    in_git_dir = component.eq_ignore_ascii_case(".git");
+                } else {
+                    normalized.push('/');
+                }
+                normalized.push_str(component);
             }
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(GitError::InvalidInput(format!(
@@ -55,11 +64,11 @@ pub(crate) fn normalize_repo_relative_path(
         }
     }
 
-    if components.is_empty() {
+    if normalized.is_empty() {
         return Err(GitError::InvalidInput(messages.root.to_string()));
     }
-    if components[0].eq_ignore_ascii_case(".git") {
+    if in_git_dir {
         return Err(GitError::InvalidInput(messages.git_dir.to_string()));
     }
-    Ok(components.join("/"))
+    Ok(normalized)
 }

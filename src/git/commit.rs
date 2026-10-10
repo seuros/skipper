@@ -67,10 +67,10 @@ fn commit_inner(
         return Err(GitError::RepositoryState(format!("{state:?}")));
     }
 
+    // Only read: the shared index is borrowed, not cloned.
     let index = repo
         .index_or_load_from_head_or_empty()
-        .map_err(|e| GitError::Operation(format!("{e:#}")))?
-        .into_owned();
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?;
     reject_unsupported_index_entries(&index)?;
 
     let head = repo.head().map_err(|e| GitError::Operation(format!("{e:#}")))?;

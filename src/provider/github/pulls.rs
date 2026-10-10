@@ -3,7 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{GitHubProvider, PrState};
+use super::runs::repo_path;
+use super::{GitHubProvider, PrState, lowercase, rest_url};
 use crate::error::{CliError, Result};
 use crate::workspace::ForgeRepo;
 
@@ -52,9 +53,15 @@ impl GitHubProvider {
             pull_requests: Nodes<BranchPr>,
         }
 
-        let variables =
-            serde_json::json!({ "owner": repo.owner, "name": repo.name, "branch": branch });
-        let data: Data = self.graphql(&repo.host, BRANCH_QUERY, variables).await?;
+        #[derive(Serialize)]
+        struct Variables<'a> {
+            owner: &'a str,
+            name: &'a str,
+            branch: &'a str,
+        }
+
+        let variables = Variables { owner: &repo.owner, name: &repo.name, branch };
+        let data: Data = self.graphql(&repo.host, BRANCH_QUERY, &variables).await?;
         let prs = data
             .repository
             .ok_or_else(|| CliError::no_target(format!("no repository {}", repo.full_name())))?
@@ -72,10 +79,9 @@ impl GitHubProvider {
     /// What deciding on a merge takes: state, mergeability, review, the
     /// checks' verdict, labels, size and the merge methods allowed.
     pub async fn pr_overview(&self, repo: &ForgeRepo, number: u64) -> Result<PrOverview> {
-        let variables =
-            serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
+        let variables = PrVariables { owner: &repo.owner, name: &repo.name, number };
         let (data, checks) = tokio::join!(
-            self.graphql::<OverviewData>(&repo.host, OVERVIEW_QUERY, variables),
+            self.graphql::<OverviewData, _>(&repo.host, OVERVIEW_QUERY, &variables),
             self.pr_checks(repo, number)
         );
         let mut repository = data?
@@ -84,7 +90,7 @@ impl GitHubProvider {
         let pull = repository.pull_request.take().ok_or_else(|| {
             CliError::no_target(format!("no pull request #{number} in {}", repo.full_name()))
         })?;
-        Ok(pull.into_overview(&repository, CheckVerdict::of(&checks?)))
+        Ok(pull.into_overview(repository, CheckVerdict::of(checks?)))
     }
 
     /// The files `number` changes, with their line counts.
@@ -96,16 +102,14 @@ impl GitHubProvider {
             additions: u64,
             deletions: u64,
         }
-        let base = format!(
-            "repos/{}/{}/pulls/{number}/files",
-            urlencoding::encode(&repo.owner),
-            urlencoding::encode(&repo.name)
-        );
+        let base = repo_path(repo);
         let mut files = Vec::new();
         for page in 1.. {
-            let batch: Vec<RestFile> = self
-                .api_json_at(&repo.host, &format!("{base}?per_page={}&page={page}", super::PAGE))
-                .await?;
+            let url = rest_url(
+                &repo.host,
+                format_args!("{base}/pulls/{number}/files?per_page={}&page={page}", super::PAGE),
+            );
+            let batch: Vec<RestFile> = self.api_json_at(&repo.host, &url).await?;
             let full = batch.len() == super::PAGE;
             files.extend(batch.into_iter().map(|f| PrFile {
                 path: f.filename,
@@ -134,14 +138,15 @@ impl GitHubProvider {
         struct Merged {
             sha: String,
         }
-        let path = format!(
-            "repos/{}/{}/pulls/{number}/merge",
-            urlencoding::encode(&repo.owner),
-            urlencoding::encode(&repo.name)
-        );
-        let body = serde_json::json!({ "merge_method": method, "sha": head_sha });
-        let response = super::client::put(&repo.host, &path, &body).await?;
-        let merged: Merged = response.ok_json(&format!("merge #{number}"))?;
+        #[derive(Serialize)]
+        struct Merge<'a> {
+            merge_method: &'a str,
+            sha: &'a str,
+        }
+        let url = rest_url(&repo.host, format_args!("{}/pulls/{number}/merge", repo_path(repo)));
+        let body = Merge { merge_method: method, sha: head_sha };
+        let response = super::client::put(&repo.host, &url, &body).await?;
+        let merged: Merged = response.ok_json(format_args!("merge #{number}"))?;
         Ok(merged.sha)
     }
 
@@ -167,9 +172,12 @@ impl GitHubProvider {
             head_ref_name: String,
         }
 
-        let query = search_query(repo, state, author)?;
-        let data: Data =
-            self.graphql(&repo.host, SEARCH_QUERY, serde_json::json!({ "q": query })).await?;
+        #[derive(Serialize)]
+        struct Variables {
+            q: String,
+        }
+        let variables = Variables { q: search_query(repo, state, author)? };
+        let data: Data = self.graphql(&repo.host, SEARCH_QUERY, &variables).await?;
         Ok(data
             .search
             .nodes
@@ -178,7 +186,7 @@ impl GitHubProvider {
                 pr: l.number,
                 title: l.title,
                 head: l.head_ref_name,
-                state: l.state.to_lowercase(),
+                state: lowercase(l.state),
                 merged_at: l.merged_at,
             })
             .collect())
@@ -201,14 +209,14 @@ pub struct PrOverview {
     pub head_sha: String,
     /// mergeable | conflicting | unknown
     pub mergeable: String,
-    /// clean | blocked | behind | dirty | unstable | draft | has_hooks | unknown
+    /// clean | blocked | behind | dirty | unstable | draft | `has_hooks` | unknown
     pub merge_state: String,
-    /// approved | changes_requested | review_required; absent without review rules
+    /// approved | `changes_requested` | `review_required`; absent without review rules
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review: Option<String>,
     pub checks: CheckVerdict,
     /// Methods the repo allows: merge | squash | rebase
-    pub merge_methods: Vec<String>,
+    pub merge_methods: Vec<&'static str>,
     /// GitHub's default method for this viewer
     pub default_method: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -224,7 +232,7 @@ pub struct PrOverview {
 /// not zero, and which checks failed.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CheckVerdict {
-    /// success | failure | cancelled | pending | no_checks
+    /// success | failure | cancelled | pending | `no_checks`
     pub conclusion: &'static str,
     pub counts: super::CheckCounts,
     /// Failed or cancelled checks, `workflow / name`.
@@ -233,14 +241,19 @@ pub struct CheckVerdict {
 }
 
 impl CheckVerdict {
-    pub fn of(checks: &[super::PrCheck]) -> Self {
-        let counts = super::CheckCounts::tally(checks);
+    pub fn of(checks: Vec<super::PrCheck>) -> Self {
+        let counts = super::CheckCounts::tally(&checks);
         let failed = checks
-            .iter()
-            .filter(|c| matches!(c.bucket.as_str(), "fail" | "cancel"))
-            .map(|c| match c.workflow.as_str() {
-                "" => c.name.clone(),
-                workflow => format!("{workflow} / {}", c.name),
+            .into_iter()
+            .filter(|c| matches!(c.bucket, "fail" | "cancel"))
+            .map(|c| {
+                if c.workflow.is_empty() {
+                    return c.name;
+                }
+                let mut label = c.workflow;
+                label.push_str(" / ");
+                label.push_str(&c.name);
+                label
             })
             .collect();
         Self { conclusion: counts.conclusion(), counts, failed }
@@ -297,8 +310,16 @@ struct Label {
     name: String,
 }
 
+/// GraphQL variables naming one PR.
+#[derive(Serialize)]
+pub(super) struct PrVariables<'a> {
+    pub owner: &'a str,
+    pub name: &'a str,
+    pub number: u64,
+}
+
 impl OverviewPull {
-    fn into_overview(self, repo: &OverviewRepo, checks: CheckVerdict) -> PrOverview {
+    fn into_overview(self, repo: OverviewRepo, checks: CheckVerdict) -> PrOverview {
         let allowed = [
             ("merge", repo.merge_commit_allowed),
             ("squash", repo.squash_merge_allowed),
@@ -307,22 +328,22 @@ impl OverviewPull {
         PrOverview {
             pr: self.number,
             title: self.title,
-            state: self.state.to_lowercase(),
+            state: lowercase(self.state),
             draft: self.is_draft,
             author: super::login(self.author),
             head: self.head_ref_name,
             base: self.base_ref_name,
             head_sha: self.head_ref_oid,
-            mergeable: self.mergeable.to_lowercase(),
-            merge_state: self.merge_state_status.to_lowercase(),
-            review: self.review_decision.map(|r| r.to_lowercase()),
+            mergeable: lowercase(self.mergeable),
+            merge_state: lowercase(self.merge_state_status),
+            review: self.review_decision.map(lowercase),
             checks,
             merge_methods: allowed
                 .iter()
                 .filter(|(_, on)| *on)
-                .map(|(method, _)| (*method).to_string())
+                .map(|(method, _)| *method)
                 .collect(),
-            default_method: repo.viewer_default_merge_method.to_lowercase(),
+            default_method: lowercase(repo.viewer_default_merge_method),
             labels: self
                 .labels
                 .map(|l| l.nodes.into_iter().map(|l| l.name).collect())
@@ -356,12 +377,9 @@ pub(super) struct Owner {
 /// A PR from this repo's own branch, open first, else the newest; else the one
 /// fork PR with that branch name. Several fork PRs leave it open.
 pub(super) fn pick_branch_pr(owner: &str, prs: &[BranchPr]) -> Option<u64> {
-    let own: Vec<&BranchPr> = prs
-        .iter()
-        .filter(|pr| pr.head_repository_owner.as_ref().is_some_and(|o| o.login == owner))
-        .collect();
-    if let Some(first) = own.first() {
-        return Some(own.iter().find(|pr| pr.state == "OPEN").unwrap_or(first).number);
+    let own = |pr: &&BranchPr| pr.head_repository_owner.as_ref().is_some_and(|o| o.login == owner);
+    if let Some(newest) = prs.iter().find(own) {
+        return Some(prs.iter().filter(own).find(|pr| pr.state == "OPEN").unwrap_or(newest).number);
     }
     match prs {
         [only] => Some(only.number),

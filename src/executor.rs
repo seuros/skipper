@@ -14,7 +14,7 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn success(&self) -> bool {
+    pub const fn success(&self) -> bool {
         self.code == 0
     }
 
@@ -67,8 +67,8 @@ async fn run(
         .map_err(|_| CliError::timeout(cli, timeout_duration))?
         .map_err(|e| CliError::io(cli, e))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = lossy(output.stdout);
+    let stderr = lossy(output.stderr);
     let code = output.status.code().unwrap_or(-1);
 
     tracing::debug!(cli = cli, code = code, "command completed");
@@ -76,8 +76,10 @@ async fn run(
     Ok(Output { stdout, stderr, code })
 }
 
-pub async fn execute_default(cli: &str, args: &[&str]) -> Result<Output> {
-    execute(cli, args, DEFAULT_TIMEOUT).await
+/// `bytes` as text, reusing the buffer when it is UTF-8 (the usual case);
+/// only invalid output is copied, with U+FFFD for the bad bytes.
+fn lossy(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 pub async fn execute_success(
@@ -88,14 +90,10 @@ pub async fn execute_success(
     let output = execute(cli, args, timeout_duration).await?;
 
     if !output.success() {
-        return Err(CliError::execution_failed(cli, output.code, &output.stderr));
+        return Err(CliError::execution_failed(cli, output.code, output.stderr));
     }
 
     Ok(output)
-}
-
-pub async fn is_installed(cli: &str) -> bool {
-    execute(cli, &["--version"], Duration::from_secs(5)).await.is_ok()
 }
 
 pub async fn get_version_output(cli: &str) -> Result<String> {
@@ -103,10 +101,10 @@ pub async fn get_version_output(cli: &str) -> Result<String> {
 
     if output.success() {
         Ok(output.stdout)
-    } else if output.stderr.to_lowercase().contains("version") {
+    } else if crate::ascii::contains_ignore_case(&output.stderr, "version") {
         Ok(output.stderr)
     } else {
-        Err(CliError::execution_failed(cli, output.code, &output.stderr))
+        Err(CliError::execution_failed(cli, output.code, output.stderr))
     }
 }
 

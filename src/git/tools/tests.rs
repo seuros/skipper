@@ -39,7 +39,7 @@ fn execute_git_diff_structured(
     cwd: &Path,
     params: GitDiffParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    execute_git_diff_structured_with_cancel(cwd, params, Arc::new(AtomicBool::new(false)))
+    execute_git_diff_structured_with_cancel(cwd, params, &Arc::new(AtomicBool::new(false)))
 }
 
 /// A repo at `dir` with an author configured and one commit of `file.txt`.

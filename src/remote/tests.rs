@@ -91,31 +91,20 @@ fn test_config_overrides_default_host() {
 }
 
 #[test]
-fn test_providers_for_urls() {
+fn test_classify_splits_forges_from_unmapped_hosts() {
     let mut hosts = ForgeHosts::with_defaults();
     hosts.extend(&HashMap::from([("192.168.3.20".to_string(), "forgejo".to_string())]));
 
-    let providers = hosts.providers_for_urls(["ssh://git@192.168.3.20:12222/seuros/skipper.git"]);
-    assert_eq!(providers.into_iter().collect::<Vec<_>>(), vec!["tea"]);
-
-    let providers = hosts.providers_for_urls([
+    let (forges, unknown) = hosts.classify([
         "git@github.com:seuros/skipper.git",
         "ssh://git@192.168.3.20:12222/seuros/skipper.git",
+        "https://GitLab.internal/g/p.git",
+        "/srv/git/repo.git",
     ]);
-    assert_eq!(providers.into_iter().collect::<Vec<_>>(), vec!["github", "tea"]);
+    assert_eq!(forges.into_iter().collect::<Vec<_>>(), ["github", "tea"]);
+    assert_eq!(unknown.into_iter().collect::<Vec<_>>(), ["gitlab.internal"]);
 
-    assert!(hosts.providers_for_urls(["/srv/git/repo.git"]).is_empty());
-}
-
-#[test]
-fn test_unknown_hosts_reported() {
-    let hosts = ForgeHosts::with_defaults();
-    let unknown = hosts.unknown_hosts([
-        "https://github.com/o/r",
-        "ssh://git@192.168.3.20:12222/o/r.git",
-        "/srv/git/local.git",
-    ]);
-    assert_eq!(unknown.into_iter().collect::<Vec<_>>(), vec!["192.168.3.20".to_string()]);
+    assert_eq!(hosts.provider_for_host("GitHub.COM"), Some("github"));
 }
 
 #[test]

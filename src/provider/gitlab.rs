@@ -9,7 +9,7 @@ pub struct GitLabProvider {
 }
 
 impl GitLabProvider {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { min_version: minimum::gitlab() }
     }
 }
@@ -70,81 +70,11 @@ impl Provider for GitLabProvider {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct Project {
-    pub id: u64,
-    pub name: String,
-    pub path_with_namespace: String,
-    pub description: Option<String>,
-    pub visibility: String,
-    pub default_branch: Option<String>,
-    pub web_url: String,
-    pub ssh_url_to_repo: Option<String>,
-    pub http_url_to_repo: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Issue {
-    pub iid: u64,
-    pub title: String,
-    pub description: Option<String>,
-    pub state: String,
-    pub author: Author,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    pub created_at: String,
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Author {
-    pub username: String,
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct MergeRequest {
-    pub iid: u64,
-    pub title: String,
-    pub description: Option<String>,
-    pub state: String,
-    pub author: Author,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    pub created_at: String,
-    pub updated_at: Option<String>,
-    pub source_branch: String,
-    pub target_branch: String,
-    pub merge_status: Option<String>,
-    #[serde(default)]
-    pub draft: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Branch {
-    pub name: String,
-    #[serde(default)]
-    pub protected: bool,
-    pub default: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Release {
-    pub tag_name: String,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub created_at: Option<String>,
-    pub released_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
 pub struct Pipeline {
     pub id: u64,
     pub status: String,
     #[serde(rename = "ref")]
     pub ref_name: Option<String>,
-    pub sha: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
     pub web_url: Option<String>,
 }
 
@@ -165,9 +95,9 @@ impl From<Pipeline> for BuildRun {
             _ => "unknown",
         };
 
-        BuildRun {
+        Self {
             id: pipeline.id.to_string(),
-            status: status.to_string(),
+            status,
             branch: pipeline.ref_name,
             workflow: None,
             title: None,

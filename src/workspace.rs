@@ -52,8 +52,9 @@ pub struct ForgeRepo {
 }
 
 impl ForgeRepo {
-    pub fn full_name(&self) -> String {
-        format!("{}/{}", self.owner, self.name)
+    /// `owner/name`, written where it is used instead of into a `String` first.
+    pub fn full_name(&self) -> impl std::fmt::Display + '_ {
+        std::fmt::from_fn(|f| write!(f, "{}/{}", self.owner, self.name))
     }
 }
 
@@ -113,36 +114,46 @@ pub fn forge_repo(env: &SkipperEnvironment) -> Result<ForgeRepo, RemoteError> {
         });
     };
 
-    let CurrentRemote { name: remote, url, .. } = current;
-    let located = crate::remote::host_of(&url).zip(crate::remote::repo_path_of(&url));
+    let CurrentRemote { name, url, .. } = current;
+    locate(env, name, &url)
+}
+
+/// The forge repo remote `remote` points at with `url`. The host is parsed
+/// once and serves the forge lookup too.
+fn locate(env: &SkipperEnvironment, remote: String, url: &str) -> Result<ForgeRepo, RemoteError> {
+    let located = crate::remote::host_of(url).zip(crate::remote::repo_path_of(url));
     let Some((host, (owner, name))) = located else {
-        return Err(RemoteError::NotARepoUrl { remote, url: crate::remote::redact_url(&url) });
+        return Err(RemoteError::NotARepoUrl { remote, url: crate::remote::redact_url(url) });
     };
-    let Some(forge) = env.forge_for_url(&url) else {
+    let Some(forge) = env.forge_for_host(&host) else {
         return Err(RemoteError::Unmapped { remote, host });
     };
     Ok(ForgeRepo { remote, forge, host, owner, name })
 }
 
 /// The repo on `forge`: the current remote when it is there, else the one repo
-/// the remotes have on that forge. Forge-specific reads (GitHub PR checks) keep
-/// working while the branch tracks a mirror on another forge.
+/// the remotes have on that forge.
+///
+/// Forge-specific reads (GitHub PR checks) keep working while the branch
+/// tracks a mirror on another forge.
 pub fn forge_repo_on(
     env: &SkipperEnvironment,
     forge: &'static str,
 ) -> Result<ForgeRepo, RemoteError> {
-    match forge_repo(env) {
-        Ok(current) if current.forge == forge => return Ok(current),
-        Err(RemoteError::Git(e)) => return Err(RemoteError::Git(e)),
-        _ => {}
+    let (info, current) = crate::git::remotes_with_current(env.cwd())?;
+    if let Some(current) = current
+        && let Ok(repo) = locate(env, current.name, &current.url)
+        && repo.forge == forge
+    {
+        return Ok(repo);
     }
 
-    let candidates = crate::git::remotes(env.cwd())?
+    let candidates = info
         .remotes
         .into_iter()
         .filter_map(|(remote, url)| {
-            env.forge_for_url(&url).filter(|f| *f == forge)?;
             let host = crate::remote::host_of(&url)?;
+            (env.forge_for_host(&host)? == forge).then_some(())?;
             let (owner, name) = crate::remote::repo_path_of(&url)?;
             Some(ForgeRepo { remote, forge, host, owner, name })
         })
@@ -178,18 +189,7 @@ fn select(
     };
     let remotes = crate::git::remotes(env.cwd())?.remotes;
     if let Some(url) = remotes.get(spec) {
-        let located = crate::remote::host_of(url).zip(crate::remote::repo_path_of(url));
-        let Some((host, (owner, name))) = located else {
-            return Err(RemoteError::NotARepoUrl {
-                remote: spec.to_string(),
-                url: crate::remote::redact_url(url),
-            });
-        };
-        let forge = env.forge_for_url(url).ok_or_else(|| RemoteError::Unmapped {
-            remote: spec.to_string(),
-            host: host.clone(),
-        })?;
-        return Ok(ForgeRepo { remote: spec.to_string(), forge, host, owner, name });
+        return locate(env, spec.to_owned(), url);
     }
     let Some((owner, name)) = owner_name(spec) else {
         let names: Vec<&str> = remotes.keys().map(String::as_str).collect();
@@ -233,8 +233,8 @@ pub fn select_any(env: &SkipperEnvironment, spec: Option<&str>) -> Result<ForgeR
 pub fn snapshot(env: &SkipperEnvironment) -> Result<Workspace, GitError> {
     let cwd = env.cwd().to_path_buf();
 
-    let info = match crate::git::repo_info(&cwd) {
-        Ok(info) => info,
+    let (info, remotes) = match crate::git::repo_info_with_remotes(&cwd) {
+        Ok(found) => found,
         Err(GitError::NotARepo(_)) => {
             return Ok(Workspace { cwd, repo: None, forges: BTreeSet::new() });
         }
@@ -242,25 +242,24 @@ pub fn snapshot(env: &SkipperEnvironment) -> Result<Workspace, GitError> {
     };
 
     let current = info.remote.as_ref();
-    let remotes: Vec<WorkspaceRemote> = crate::remote::ordered_remotes(
-        crate::git::remotes(&cwd)?.remotes,
-        current.map(|c| c.name.as_str()),
-    )
-    .into_iter()
-    .map(|(name, url)| {
-        let host = crate::remote::host_of(&url);
-        let (owner, repo) = host.as_ref().and_then(|_| crate::remote::repo_path_of(&url)).unzip();
-        WorkspaceRemote {
-            current: current.filter(|c| c.name == name).map(|c| c.source),
-            forge: env.forge_for_url(&url),
-            url: crate::remote::redact_url(&url),
-            name,
-            host,
-            owner,
-            repo,
-        }
-    })
-    .collect();
+    let remotes: Vec<WorkspaceRemote> =
+        crate::remote::ordered_remotes(remotes, current.map(|c| c.name.as_str()))
+            .into_iter()
+            .map(|(name, url)| {
+                let host = crate::remote::host_of(&url);
+                let (owner, repo) =
+                    host.as_ref().and_then(|_| crate::remote::repo_path_of(&url)).unzip();
+                WorkspaceRemote {
+                    current: current.filter(|c| c.name == name).map(|c| c.source),
+                    forge: host.as_deref().and_then(|host| env.forge_for_host(host)),
+                    url: crate::remote::redact_url(&url),
+                    name,
+                    host,
+                    owner,
+                    repo,
+                }
+            })
+            .collect();
 
     let forges = remotes.iter().filter_map(|r| r.forge).collect();
 

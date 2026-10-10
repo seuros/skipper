@@ -3,13 +3,15 @@
 //! git's own. Nothing here forces or deletes; prompts are off, so missing
 //! credentials fail instead of hanging.
 
+use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::git::GitError;
+use crate::git::{CurrentRemote, GitError};
 
 const TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -67,8 +69,7 @@ pub fn plan_push(
 ) -> Result<PushPlan, GitError> {
     let mut refspecs = refs.iter().map(|r| checked_ref(r)).collect::<Result<Vec<_>, _>>()?;
     if refspecs.is_empty() && tags.is_empty() {
-        let branch = crate::git::repo_info(cwd)?
-            .branch
+        let branch = crate::git::current_branch(cwd)?
             .ok_or_else(|| GitError::InvalidInput("detached HEAD; pass refs".into()))?;
         refspecs.push(branch);
     }
@@ -76,13 +77,16 @@ pub fn plan_push(
         refspecs.push(format!("refs/tags/{}", checked_ref(tag)?));
     }
 
+    // One read of the remotes resolves every target.
+    let (info, current) = crate::git::remotes_with_current(cwd)?;
+    let configured = info.remotes;
     let remotes = match targets {
-        [] => remotes(cwd, None)?,
-        [all] if all == "all" => remotes(cwd, Some("all"))?,
+        [] => resolve(&configured, current, None)?,
+        [all] if all == "all" => resolve(&configured, current, Some("all"))?,
         named => {
             let mut resolved = Vec::new();
             for name in named {
-                resolved.extend(remotes(cwd, Some(name))?);
+                resolved.extend(resolve(&configured, None, Some(name))?);
             }
             resolved
         }
@@ -103,22 +107,39 @@ pub async fn push(cwd: &Path, plan: &PushPlan) -> Result<Vec<SyncOutcome>, GitEr
     Ok(outcomes)
 }
 
-/// Remote names: the current remote, every remote (`all`), or one by name.
+/// Remote names for `spec`, from one read of the remotes.
 fn remotes(cwd: &Path, spec: Option<&str>) -> Result<Vec<String>, GitError> {
-    let configured: Vec<String> = crate::git::remotes(cwd)?.remotes.into_keys().collect();
+    let (info, current) = crate::git::remotes_with_current(cwd)?;
+    resolve(&info.remotes, current, spec)
+}
+
+/// Remote names among `configured`: `current`, every remote (`all`), or one
+/// by name.
+fn resolve(
+    configured: &BTreeMap<String, String>,
+    current: Option<CurrentRemote>,
+    spec: Option<&str>,
+) -> Result<Vec<String>, GitError> {
+    let names = || {
+        fmt::from_fn(|f| {
+            for (i, name) in configured.keys().enumerate() {
+                if i > 0 {
+                    f.write_str(", ")?;
+                }
+                f.write_str(name)?;
+            }
+            Ok(())
+        })
+    };
     match spec {
-        None => crate::git::current_remote(cwd)?.map(|r| vec![r.name]).ok_or_else(|| {
-            GitError::InvalidInput(format!(
-                "no current remote among {}; name one",
-                configured.join(", ")
-            ))
+        None => current.map(|r| vec![r.name]).ok_or_else(|| {
+            GitError::InvalidInput(format!("no current remote among {}; name one", names()))
         }),
-        Some("all") if !configured.is_empty() => Ok(configured),
-        Some(name) if configured.iter().any(|c| c == name) => Ok(vec![name.to_string()]),
-        Some(name) => Err(GitError::InvalidInput(format!(
-            "no remote {name:?}; remotes: {}",
-            configured.join(", ")
-        ))),
+        Some("all") if !configured.is_empty() => Ok(configured.keys().cloned().collect()),
+        Some(name) if configured.contains_key(name) => Ok(vec![name.to_owned()]),
+        Some(name) => {
+            Err(GitError::InvalidInput(format!("no remote {name:?}; remotes: {}", names())))
+        }
     }
 }
 
@@ -204,12 +225,13 @@ async fn run_once(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome
     let output = crate::executor::execute_in("git", args, cwd, &envs, TIMEOUT)
         .await
         .map_err(|e| GitError::Operation(e.to_string()))?;
-    let text = format!("{}\n{}", output.stdout.trim(), output.stderr.trim());
-    Ok(SyncOutcome {
-        remote: remote.to_string(),
-        ok: output.success(),
-        output: text.trim().to_string(),
-    })
+    let (stdout, stderr) = (output.stdout.trim(), output.stderr.trim());
+    let text = match (stdout.is_empty(), stderr.is_empty()) {
+        (_, true) => stdout.to_owned(),
+        (true, false) => stderr.to_owned(),
+        (false, false) => format!("{stdout}\n{stderr}"),
+    };
+    Ok(SyncOutcome { remote: remote.to_owned(), ok: output.success(), output: text })
 }
 
 #[cfg(test)]

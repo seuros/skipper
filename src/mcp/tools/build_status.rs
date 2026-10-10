@@ -9,7 +9,7 @@ pub struct BuildStatusParams {
     provider: Option<String>,
     /// Specific run/pipeline id (default: recent runs for the current repository)
     run_id: Option<String>,
-    /// Number of runs to list when no run_id is given (default: 10)
+    /// Number of runs to list when no `run_id` is given (default: 10)
     limit: Option<usize>,
 }
 
@@ -28,18 +28,15 @@ impl SkipperServer {
     ) -> ToolResult {
         let provider = self.ci_provider(params.0.provider.as_deref())?;
 
-        match params.0.run_id {
-            Some(id) => {
-                let run = provider.ci_run(&self.env, Some(&id)).await.map_err(cli_error)?;
-                json_output(&run)
-            }
-            None => {
-                let runs = provider
-                    .ci_runs(&self.env, params.0.limit.unwrap_or(10))
-                    .await
-                    .map_err(cli_error)?;
-                json_output(&runs)
-            }
+        if let Some(id) = params.0.run_id {
+            let run = provider.ci_run(&self.env, Some(&id)).await.map_err(cli_error)?;
+            json_output(&run)
+        } else {
+            let runs = provider
+                .ci_runs(&self.env, params.0.limit.unwrap_or(10))
+                .await
+                .map_err(cli_error)?;
+            json_output(&runs)
         }
     }
 }

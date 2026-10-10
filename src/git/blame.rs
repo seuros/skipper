@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use gix::bstr::ByteSlice;
 use serde::Deserialize;
@@ -10,8 +11,9 @@ use crate::git::open_repo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlameLine {
-    pub sha: String,
-    pub author: String,
+    /// Shared by every line one commit owns.
+    pub sha: Arc<str>,
+    pub author: Arc<str>,
     pub line_no: usize,
     pub content: String,
 }
@@ -27,7 +29,7 @@ pub fn blame(
 
     let head_obj = head.object().git_op()?;
     let head_commit = head_obj.try_into_commit().git_op()?;
-    let author = head_commit.author().git_op()?.name.to_str_lossy().into_owned();
+    let author: Arc<str> = head_commit.author().git_op()?.name.to_str_lossy().into();
     let commit = head_commit.tree().git_op()?;
 
     let entry = commit
@@ -44,21 +46,18 @@ pub fn blame(
     // simple API), we return the file content attributed to HEAD.
     // This is a placeholder until gix gains a blame API.
     let mut result = Vec::new();
-    let head_sha = head.to_string();
-    let head_sha_short = &head_sha[..8.min(head_sha.len())];
+    let sha: Arc<str> = head.to_hex_with_len(8).to_string().into();
+    let (start, end) = lines.unwrap_or((1, usize::MAX));
 
-    for (i, line) in content.lines().enumerate() {
-        let line_no = i + 1;
-        if let Some((start, end)) = lines
-            && (line_no < start || line_no > end)
-        {
-            continue;
+    for (line_no, line) in (1..).zip(content.lines()).skip(start.saturating_sub(1)) {
+        if line_no > end {
+            break;
         }
         result.push(BlameLine {
-            sha: head_sha_short.to_string(),
-            author: author.clone(), // Placeholder until full blame traversal exists.
+            sha: Arc::clone(&sha),
+            author: Arc::clone(&author), // Placeholder until full blame traversal exists.
             line_no,
-            content: line.to_string(),
+            content: line.to_owned(),
         });
     }
 

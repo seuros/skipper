@@ -8,8 +8,10 @@ use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use super::GitHubProvider;
+use super::pulls::PrVariables;
 use crate::error::{CliError, Result};
 use crate::workspace::ForgeRepo;
 
@@ -61,9 +63,9 @@ impl GitHubProvider {
             let message = format!("no pull request #{number} in {}", repo.full_name());
             return Err(self.not_found(repo, message).await);
         }
-        let branch = crate::git::repo_info(cwd)
+        let branch = crate::git::current_branch(cwd)
             .ok()
-            .and_then(|info| info.branch)
+            .flatten()
             .ok_or_else(|| CliError::no_target("detached HEAD; pass the PR number"))?;
         match self.pr_for_branch(repo, head_owner, &branch).await {
             Err(CliError::NoTarget(message)) => Err(self.not_found(repo, message).await),
@@ -79,12 +81,11 @@ impl GitHubProvider {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Repository {
-            pull_request: Option<serde_json::Value>,
+            pull_request: Option<IgnoredAny>,
         }
 
-        let variables =
-            serde_json::json!({ "owner": repo.owner, "name": repo.name, "number": number });
-        match self.graphql::<Data>(&repo.host, PR_EXISTS, variables).await {
+        let variables = PrVariables { owner: &repo.owner, name: &repo.name, number };
+        match self.graphql::<Data, _>(&repo.host, PR_EXISTS, &variables).await {
             Ok(data) => Ok(data.repository.and_then(|r| r.pull_request).is_some()),
             Err(CliError::ExecutionFailed { code: 200, .. }) => Ok(false),
             Err(e) => Err(e),
@@ -94,7 +95,7 @@ impl GitHubProvider {
     /// `message`, naming `repo`'s parent when it is a fork.
     async fn not_found(&self, repo: &ForgeRepo, message: String) -> CliError {
         let parent = self.parent(repo).await;
-        CliError::no_target(fork_hint(message, &repo.full_name(), parent.as_deref()))
+        CliError::no_target(fork_hint(message, repo.full_name(), parent.as_deref()))
     }
 
     /// `repo`'s parent, once per process; `None` when it has none or GitHub
@@ -114,19 +115,25 @@ impl GitHubProvider {
             name_with_owner: String,
         }
 
-        let key = format!("{}/{}", repo.host, repo.full_name());
+        #[derive(serde::Serialize)]
+        struct Variables<'a> {
+            owner: &'a str,
+            name: &'a str,
+        }
+
+        let key = format!("{}/{}/{}", repo.host, repo.owner, repo.name);
         if let Some(parent) = PARENTS.lock().expect("parent cache lock").get(&key) {
             return parent.clone();
         }
-        let variables = serde_json::json!({ "owner": repo.owner, "name": repo.name });
-        let data: Data = self.graphql(&repo.host, PARENT, variables).await.ok()?;
+        let variables = Variables { owner: &repo.owner, name: &repo.name };
+        let data: Data = self.graphql(&repo.host, PARENT, &variables).await.ok()?;
         let parent = data.repository.and_then(|r| r.parent).map(|p| p.name_with_owner);
         PARENTS.lock().expect("parent cache lock").insert(key, parent.clone());
         parent
     }
 }
 
-fn fork_hint(message: String, repo: &str, parent: Option<&str>) -> String {
+fn fork_hint(message: String, repo: impl std::fmt::Display, parent: Option<&str>) -> String {
     match parent {
         Some(parent) => format!(
             "{message}; {repo} is a fork of {parent}: pass repo={parent} (or the remote that \

@@ -1,27 +1,26 @@
 //! A PR's discussion over REST: its description, inline review comments,
 //! conversation comments and reviews, bodies cut down to their readable text.
 
+use std::borrow::Cow;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{GitHubProvider, PAGE};
+use super::runs::repo_path;
+use super::{GitHubProvider, PAGE, rest_url};
 use crate::error::Result;
 use crate::provider::text::readable_by;
 use crate::workspace::ForgeRepo;
 
 impl GitHubProvider {
     pub async fn pr_discussion(&self, repo: &ForgeRepo, number: u64) -> Result<PrDiscussion> {
-        let base = format!(
-            "repos/{}/{}",
-            urlencoding::encode(&repo.owner),
-            urlencoding::encode(&repo.name)
-        );
-        let pull = format!("{base}/pulls/{number}");
-        let head: RestPull = self.api_json_at(&repo.host, &pull).await?;
+        let base = repo_path(repo);
+        let url = rest_url(&repo.host, format_args!("{base}/pulls/{number}"));
+        let head: RestPull = self.api_json_at(&repo.host, &url).await?;
         let sources = [
-            ("inline", format!("{pull}/comments")),
-            ("comment", format!("{base}/issues/{number}/comments")),
-            ("review", format!("{pull}/reviews")),
+            ("inline", "pulls", "comments"),
+            ("comment", "issues", "comments"),
+            ("review", "pulls", "reviews"),
         ];
         let mut notes = Vec::new();
         let author = login(head.user);
@@ -38,11 +37,13 @@ impl GitHubProvider {
                 body: description,
             });
         }
-        for (kind, path) in sources {
+        for (kind, under, what) in sources {
             for page in 1.. {
-                let batch: Vec<RestNote> = self
-                    .api_json_at(&repo.host, &format!("{path}?per_page={PAGE}&page={page}"))
-                    .await?;
+                let url = rest_url(
+                    &repo.host,
+                    format_args!("{base}/{under}/{number}/{what}?per_page={PAGE}&page={page}"),
+                );
+                let batch: Vec<RestNote> = self.api_json_at(&repo.host, &url).await?;
                 let full = batch.len() == PAGE;
                 notes.extend(
                     batch
@@ -59,7 +60,7 @@ impl GitHubProvider {
 
         Ok(PrDiscussion {
             pr: number,
-            state: if head.merged { "merged".to_string() } else { head.state },
+            state: if head.merged { Cow::Borrowed("merged") } else { Cow::Owned(head.state) },
             notes,
         })
     }
@@ -68,7 +69,8 @@ impl GitHubProvider {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PrDiscussion {
     pub pr: u64,
-    pub state: String,
+    /// open | closed | merged
+    pub state: Cow<'static, str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<PrNote>,
 }

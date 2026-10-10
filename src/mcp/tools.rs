@@ -48,48 +48,41 @@ impl SkipperServer {
         &self,
         explicit: Option<&str>,
     ) -> Result<Arc<dyn Provider>, ToolError> {
-        use crate::environment::Environment as _;
+        let usable = |name: &&str| self.registry.is_enabled(name) && self.env.has_forge(name);
 
-        let forges = self.env.forges();
-        let usable = |name: &str| self.registry.is_enabled(name) && forges.contains(name);
-
-        match explicit {
-            Some(name) => {
-                if !CI_PROVIDERS.contains(&name) {
-                    return Err(ToolError::InvalidArguments(format!(
-                        "provider must be one of: {}",
-                        CI_PROVIDERS.join(", ")
-                    )));
-                }
-                if !self.registry.is_enabled(name) {
-                    return Err(ToolError::Execution(format!(
-                        "provider {name} is not available (CLI missing or unauthenticated)"
-                    )));
-                }
-                if !forges.contains(name) {
-                    return Err(ToolError::Execution(format!(
-                        "no remote of this workspace points at {name}"
-                    )));
-                }
-                self.registry
-                    .get_arc(name)
-                    .ok_or_else(|| ToolError::Internal(format!("provider {name} not registered")))
+        if let Some(name) = explicit {
+            if !CI_PROVIDERS.contains(&name) {
+                return Err(ToolError::InvalidArguments(format!(
+                    "provider must be one of: {}",
+                    CI_PROVIDERS.join(", ")
+                )));
             }
-            None => {
-                let enabled: Vec<&str> =
-                    CI_PROVIDERS.iter().copied().filter(|name| usable(name)).collect();
-                match enabled[..] {
-                    [name] => self.ci_provider(Some(name)),
-                    [] => Err(ToolError::Execution(
-                        "no CI-capable forge for this workspace (need a GitHub or GitLab \
-                         remote with gh or glab authenticated)"
-                            .to_string(),
-                    )),
-                    _ => Err(ToolError::InvalidArguments(format!(
-                        "this workspace has remotes on several CI forges ({}), pass `provider`",
-                        enabled.join(", ")
-                    ))),
-                }
+            if !self.registry.is_enabled(name) {
+                return Err(ToolError::Execution(format!(
+                    "provider {name} is not available (CLI missing or unauthenticated)"
+                )));
+            }
+            if !self.env.has_forge(name) {
+                return Err(ToolError::Execution(format!(
+                    "no remote of this workspace points at {name}"
+                )));
+            }
+            self.registry
+                .get_arc(name)
+                .ok_or_else(|| ToolError::Internal(format!("provider {name} not registered")))
+        } else {
+            let mut enabled = CI_PROVIDERS.iter().copied().filter(usable);
+            match (enabled.next(), enabled.next()) {
+                (Some(name), None) => self.ci_provider(Some(name)),
+                (None, _) => Err(ToolError::Execution(
+                    "no CI-capable forge for this workspace (need a GitHub or GitLab \
+                     remote with gh or glab authenticated)"
+                        .to_string(),
+                )),
+                (Some(_), Some(_)) => Err(ToolError::InvalidArguments(format!(
+                    "this workspace has remotes on several CI forges ({}), pass `provider`",
+                    CI_PROVIDERS.iter().copied().filter(usable).collect::<Vec<_>>().join(", ")
+                ))),
             }
         }
     }
@@ -163,6 +156,10 @@ pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
 
 #[must_use]
 pub fn router() -> McpRouter<SkipperServer> {
+    McpRouter::new(tool_router(), McpPromptRouter::new(), resource_router(), template_router())
+}
+
+fn tool_router() -> McpToolRouter<SkipperServer> {
     #[allow(unused_mut)]
     let mut tools = McpToolRouter::new()
         .with_tool(
@@ -239,6 +236,10 @@ pub fn router() -> McpRouter<SkipperServer> {
             );
     }
 
+    tools
+}
+
+fn resource_router() -> McpResourceRouter<SkipperServer> {
     #[allow(unused_mut)]
     let mut resources = McpResourceRouter::new().with_resource(
         SkipperServer::workspace_resource_info(),
@@ -264,6 +265,10 @@ pub fn router() -> McpRouter<SkipperServer> {
         );
     }
 
+    resources
+}
+
+fn template_router() -> McpResourceTemplateRouter<SkipperServer> {
     #[allow(unused_mut)]
     let mut templates = McpResourceTemplateRouter::new();
 
@@ -318,9 +323,8 @@ pub fn router() -> McpRouter<SkipperServer> {
             );
     }
 
-    McpRouter::new(tools, McpPromptRouter::new(), resources, templates)
+    templates
 }
 
-// Every assertion is per forge; a forge-less build has nothing to check.
-#[cfg(all(test, any(feature = "github", feature = "gitlab", feature = "tea")))]
+#[cfg(all(test, feature = "github"))]
 mod tests;

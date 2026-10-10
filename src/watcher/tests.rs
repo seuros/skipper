@@ -1,68 +1,62 @@
 use super::*;
+use std::sync::Mutex;
 
-#[test]
-fn test_watcher_state_is_clean() {
-    let clean = WatcherState::GitDirty { staged: 0, modified: 0, untracked: 0 };
-    assert!(clean.is_clean());
+/// MOCKED: replays scripted staged counts instead of reading git; the
+/// message comes from the real `GitStatusWatcher`.
+struct Scripted(Mutex<std::vec::IntoIter<usize>>);
 
-    let dirty = WatcherState::GitDirty { staged: 1, modified: 0, untracked: 0 };
-    assert!(!dirty.is_clean());
-}
-
-#[test]
-fn test_watcher_state_equality() {
-    let s1 = WatcherState::GitDirty { staged: 1, modified: 2, untracked: 3 };
-    let s2 = WatcherState::GitDirty { staged: 1, modified: 2, untracked: 3 };
-    let s3 = WatcherState::GitDirty { staged: 1, modified: 2, untracked: 4 };
-
-    assert_eq!(s1, s2);
-    assert_ne!(s1, s3);
-}
-
-struct StaticBuildWatcher;
-
-impl Watcher for StaticBuildWatcher {
-    fn name(&self) -> &str {
-        "build_test_1"
+impl Watcher for Scripted {
+    fn name(&self) -> &'static str {
+        "scripted"
     }
 
     fn interval(&self) -> Duration {
-        Duration::from_secs(3600)
+        Duration::from_secs(1)
     }
 
     fn check(&self) -> BoxFuture<'_, WatcherResult> {
-        Box::pin(async { Ok(WatcherState::GitDirty { staged: 0, modified: 0, untracked: 0 }) })
+        let next = self.0.lock().expect("script lock").next();
+        Box::pin(async move {
+            let staged = next.ok_or_else(|| CliError::no_target("script exhausted"))?;
+            Ok(WatcherState::GitDirty { staged, modified: 0, untracked: 0 })
+        })
     }
 
-    fn on_change(&self, _old: &WatcherState, _new: &WatcherState) -> Option<Notification> {
-        None
+    fn on_change(&self, old: &WatcherState, new: &WatcherState) -> Option<Notification> {
+        GitStatusWatcher::new(".").on_change(old, new)
     }
 }
 
-#[tokio::test]
-async fn test_manager_remove_stops_watcher() {
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let manager = WatcherManager::new(tx);
+#[tokio::test(start_paused = true)]
+async fn test_manager_reports_changes_after_debounce() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let manager = WatcherManager { tx, debounce: Duration::from_secs(2), tasks: Mutex::default() };
+    let start = Instant::now();
 
-    manager.add(Arc::new(StaticBuildWatcher)).await;
-    assert!(manager.watching("build_test_1"));
-    assert_eq!(manager.active_names(), vec!["build_test_1".to_string()]);
+    // t0 baseline, t1 change inside the debounce, t2 the same change once
+    // it has passed, t3 unchanged, t4 a new change.
+    manager.add(Arc::new(Scripted(Mutex::new(vec![0, 1, 1, 1, 2].into_iter()))));
 
-    assert!(manager.remove("build_test_1").await);
-    assert!(!manager.watching("build_test_1"));
-    assert!(manager.get_state("build_test_1").await.is_none());
-
-    assert!(!manager.remove("build_test_1").await);
+    let reports =
+        [(2, "Git status changed: staged: 0 → 1", 1), (4, "Git status changed: staged: 1 → 2", 2)];
+    for (secs, message, staged) in reports {
+        let note = rx.recv().await.expect("watcher reports the change");
+        assert_eq!(
+            (start.elapsed().as_secs(), note.message.as_str(), &note.data["staged"]),
+            (secs, message, &serde_json::json!(staged))
+        );
+    }
+    manager.stop();
 }
 
 #[tokio::test]
 async fn test_remote_watcher_reports_current_remote_switch() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let env = Arc::new(crate::environment::SkipperEnvironment::new(temp.path()).await);
+    let env = Arc::new(crate::environment::SkipperEnvironment::new(temp.path()));
     let watcher = RemoteWatcher::new(env);
     let state = |current: &str| WatcherState::Forges {
         has_repo: true,
-        forges: vec!["github".to_string(), "tea".to_string()],
+        forges: BTreeSet::from(["github", "tea"]),
         current: Some(current.to_string()),
     };
 

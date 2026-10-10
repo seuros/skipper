@@ -8,6 +8,7 @@ use std::time::Duration;
 use mcp_host::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::git::GitCtx;
 use crate::git::GitServer;
@@ -34,8 +35,8 @@ impl From<crate::git::GitError> for GitToolError {
 impl From<GitToolError> for ToolError {
     fn from(e: GitToolError) -> Self {
         match e {
-            GitToolError::Caller(message) => ToolError::InvalidArguments(message),
-            GitToolError::Failed(message) => ToolError::Execution(message),
+            GitToolError::Caller(message) => Self::InvalidArguments(message),
+            GitToolError::Failed(message) => Self::Execution(message),
         }
     }
 }
@@ -66,18 +67,18 @@ async fn execute_cancellable_blocking<P, F, R>(
 ) -> Result<R, GitToolError>
 where
     P: Send + 'static,
-    F: FnOnce(&Path, P, Arc<AtomicBool>) -> Result<R, GitToolError> + Send + 'static,
+    F: FnOnce(&Path, P, &Arc<AtomicBool>) -> Result<R, GitToolError> + Send + 'static,
     R: Send + 'static,
 {
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = Arc::clone(&cancel);
-    let mut task = tokio::task::spawn_blocking(move || f(&cwd, params, worker_cancel));
+    let mut task = tokio::task::spawn_blocking(move || f(&cwd, params, &worker_cancel));
     tokio::select! {
         biased;
         result = &mut task => {
             result.map_err(|e| GitToolError::Failed(format!("{operation} task failed: {e}")))?
         }
-        _ = tokio::time::sleep(timeout) => {
+        () = tokio::time::sleep(timeout) => {
             cancel.store(true, Ordering::Release);
             let _worker_result = task.await.map_err(|e| {
                 GitToolError::Failed(format!(
@@ -103,12 +104,19 @@ pub(crate) async fn execute_git_diff_blocking(
     .await
 }
 
-fn output_from_json_result(result: Result<serde_json::Value, GitToolError>) -> ToolResult {
-    match result {
-        Ok(value) => ToolOutput::structured(value)
-            .map_err(|e| ToolError::Execution(format!("non-object tool output: {e}"))),
-        Err(e) => Err(e.into()),
+/// The tool's object as structured output, as is: `ToolOutput::structured`
+/// would serialize the finished `Value` into a second copy.
+fn output_from_json_result(result: Result<Value, GitToolError>) -> ToolResult {
+    match result? {
+        Value::Object(map) => Ok(ToolOutput::json(map)),
+        _ => Err(ToolError::Execution("non-object tool output".to_string())),
     }
+}
+
+/// A JSON object of owned values, moved in. `json!` serializes every value
+/// through a reference, copying strings and whole subtrees.
+fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
+    Value::Object(fields.into_iter().map(|(key, value)| (key.to_owned(), value)).collect())
 }
 
 fn line_range(
@@ -124,11 +132,11 @@ fn line_range(
     }
 }
 
-fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, GitToolError> {
+fn to_json_value<T: serde::Serialize + ?Sized>(value: &T) -> Result<Value, GitToolError> {
     serde_json::to_value(value).map_err(|error| GitToolError::Failed(error.to_string()))
 }
 
-fn default_log_limit() -> usize {
+const fn default_log_limit() -> usize {
     20
 }
 
@@ -437,10 +445,9 @@ pub fn tool_infos() -> Vec<ToolInfo> {
 
 fn execute_git_diff_structured_with_cancel(
     cwd: &Path,
-    params: GitDiffParams,
-    cancel: Arc<AtomicBool>,
+    GitDiffParams { scope, format, check, base, paths }: GitDiffParams,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<serde_json::Value, GitToolError> {
-    let GitDiffParams { scope, format, check, base, paths } = params;
     let report_scope = scope;
     let path_refs =
         paths.as_ref().map(|items| items.iter().map(String::as_str).collect::<Vec<_>>());
@@ -453,43 +460,62 @@ fn execute_git_diff_structured_with_cancel(
         check,
         cancel,
     )?;
+    // Built by move: a patch is up to 8 MiB, and `json!` would copy it once
+    // per level of nesting.
     let result = match format {
-        crate::git::DiffFormat::Patch => serde_json::json!({
-            "format": format,
-            "files": report.files.iter().map(|file| serde_json::json!({
-                "path": file.path,
-                "status": file.status,
-                "binary": file.binary,
-                "patch": file.patch,
-            })).collect::<Vec<_>>(),
-        }),
-        crate::git::DiffFormat::Stat => serde_json::json!({
-            "format": format,
-            "files": report.files.iter().map(|file| serde_json::json!({
-                "path": file.path,
-                "status": file.status,
-                "binary": file.binary,
-                "additions": file.additions,
-                "deletions": file.deletions,
-            })).collect::<Vec<_>>(),
-        }),
-        crate::git::DiffFormat::NameOnly => serde_json::json!({
-            "format": format,
-            "paths": report.paths,
-        }),
+        crate::git::DiffFormat::Patch => object([
+            ("format", json!(format)),
+            (
+                "files",
+                report
+                    .files
+                    .into_iter()
+                    .map(|file| {
+                        object([
+                            ("path", file.path.into()),
+                            ("status", json!(file.status)),
+                            ("binary", file.binary.into()),
+                            ("patch", file.patch.into()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ]),
+        crate::git::DiffFormat::Stat => object([
+            ("format", json!(format)),
+            (
+                "files",
+                report
+                    .files
+                    .into_iter()
+                    .map(|file| {
+                        object([
+                            ("path", file.path.into()),
+                            ("status", json!(file.status)),
+                            ("binary", file.binary.into()),
+                            ("additions", file.additions.into()),
+                            ("deletions", file.deletions.into()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ]),
+        crate::git::DiffFormat::NameOnly => {
+            object([("format", json!(format)), ("paths", report.paths.into())])
+        }
     };
     let whitespace_check = if check {
-        serde_json::json!({
-            "checked": true,
-            "passed": report.whitespace_errors.is_empty(),
-            "errors": report.whitespace_errors,
-        })
+        object([
+            ("checked", true.into()),
+            ("passed", report.whitespace_errors.is_empty().into()),
+            ("errors", to_json_value(&report.whitespace_errors)?),
+        ])
     } else {
-        serde_json::json!({
-            "checked": false,
-            "passed": null,
-            "errors": [],
-        })
+        object([
+            ("checked", false.into()),
+            ("passed", Value::Null),
+            ("errors", Value::Array(Vec::new())),
+        ])
     };
     let resolved_base = match report_scope {
         crate::git::DiffScope::Worktree => None,
@@ -497,117 +523,123 @@ fn execute_git_diff_structured_with_cancel(
             Some(base.as_deref().unwrap_or("HEAD"))
         }
     };
-    Ok(serde_json::json!({
-        "scope": report_scope,
-        "base": resolved_base,
-        "path_filters": paths.unwrap_or_default(),
-        "summary": report.summary,
-        "result": result,
-        "whitespace_check": whitespace_check,
-    }))
+    Ok(object([
+        ("scope", json!(report_scope)),
+        ("base", resolved_base.into()),
+        ("path_filters", paths.unwrap_or_default().into()),
+        ("summary", to_json_value(&report.summary)?),
+        ("result", result),
+        ("whitespace_check", whitespace_check),
+    ]))
 }
 
 pub fn execute_git_log_structured(
     cwd: &Path,
-    params: GitLogParams,
+    GitLogParams { limit, branch }: GitLogParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let entries = crate::git::log(cwd, Some(params.limit), params.branch.as_deref())?;
-    to_json_value(serde_json::json!({ "commits": entries }))
+    let entries = crate::git::log(cwd, Some(limit), branch.as_deref())?;
+    Ok(object([("commits", to_json_value(&entries)?)]))
 }
 
 pub fn execute_git_show_structured(
     cwd: &Path,
-    params: GitShowParams,
+    GitShowParams { rev }: GitShowParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let entry = crate::git::show(cwd, params.rev.as_deref())?;
-    to_json_value(entry)
+    let entry = crate::git::show(cwd, rev.as_deref())?;
+    to_json_value(&entry)
 }
 
 pub fn execute_git_show_file_structured(
     cwd: &Path,
-    params: GitShowFileParams,
+    GitShowFileParams { file_path, rev, start_line, end_line }: GitShowFileParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let lines = line_range(params.start_line, params.end_line)?;
-    let file = crate::git::show_file(cwd, &params.file_path, params.rev.as_deref(), lines)?;
-    to_json_value(file)
+    let lines = line_range(start_line, end_line)?;
+    let mut file = crate::git::show_file(cwd, &file_path, rev.as_deref(), lines)?;
+    // The content (up to a whole blob) moves in rather than being serialized.
+    let content = std::mem::take(&mut file.content);
+    let mut value = to_json_value(&file)?;
+    if let Value::Object(map) = &mut value {
+        map.insert("content".to_owned(), Value::String(content));
+    }
+    Ok(value)
 }
 
 pub fn execute_git_blame_structured(
     cwd: &Path,
-    params: GitBlameParams,
+    GitBlameParams { file_path, start_line, end_line }: GitBlameParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let lines = line_range(params.start_line, params.end_line)?;
-    let blamed = crate::git::blame(cwd, &params.file_path, lines)?;
-    to_json_value(serde_json::json!({ "lines": blamed }))
+    let lines = line_range(start_line, end_line)?;
+    let blamed = crate::git::blame(cwd, &file_path, lines)?;
+    Ok(object([("lines", to_json_value(&blamed)?)]))
 }
 
 pub fn execute_git_repo_structured(
     cwd: &Path,
-    _params: GitRepoParams,
+    GitRepoParams {}: GitRepoParams,
 ) -> Result<serde_json::Value, GitToolError> {
     let info = crate::git::repo_info(cwd)?;
-    to_json_value(info)
+    to_json_value(&info)
 }
 
 pub fn execute_git_status_structured(
     cwd: &Path,
-    _params: GitStatusParams,
+    GitStatusParams {}: GitStatusParams,
 ) -> Result<serde_json::Value, GitToolError> {
     let info = crate::git::status(cwd)?;
-    to_json_value(info)
+    to_json_value(&info)
 }
 
 pub fn execute_git_remotes_structured(
     cwd: &Path,
-    _params: GitRemotesParams,
+    GitRemotesParams {}: GitRemotesParams,
 ) -> Result<serde_json::Value, GitToolError> {
     let info = crate::git::remotes(cwd)?;
-    to_json_value(info)
+    to_json_value(&info)
 }
 
 pub fn execute_git_add_structured(
     cwd: &Path,
-    params: GitAddParams,
+    GitAddParams { paths }: GitAddParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let result = crate::git::add(cwd, &params.paths)?;
-    to_json_value(result)
+    let result = crate::git::add(cwd, &paths)?;
+    to_json_value(&result)
 }
 
 pub fn execute_git_commit_structured(
     cwd: &Path,
-    params: GitCommitParams,
+    GitCommitParams { message, trailers, amend }: GitCommitParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let result = if params.amend {
-        crate::git::amend_with_trailers(cwd, &params.message, &params.trailers)
+    let result = if amend {
+        crate::git::amend_with_trailers(cwd, &message, &trailers)
     } else {
-        crate::git::commit_with_trailers(cwd, &params.message, &params.trailers)
+        crate::git::commit_with_trailers(cwd, &message, &trailers)
     }?;
-    to_json_value(result)
+    to_json_value(&result)
 }
 
 pub fn execute_git_branch_structured(
     cwd: &Path,
-    params: GitBranchParams,
+    GitBranchParams { operation, name, start_point, force }: GitBranchParams,
 ) -> Result<serde_json::Value, GitToolError> {
-    let result = match params.operation {
+    let result = match operation {
         GitBranchOperation::Create => {
-            if params.force {
+            if force {
                 return Err(GitToolError::Caller(
                     "force is only valid for branch deletion".to_string(),
                 ));
             }
-            crate::git::create_branch(cwd, &params.name, params.start_point.as_deref())
+            crate::git::create_branch(cwd, &name, start_point.as_deref())
         }
         GitBranchOperation::Delete => {
-            if params.start_point.is_some() {
+            if start_point.is_some() {
                 return Err(GitToolError::Caller(
                     "start_point is only valid for branch creation".to_string(),
                 ));
             }
-            crate::git::delete_branch(cwd, &params.name, params.force)
+            crate::git::delete_branch(cwd, &name, force)
         }
     }?;
-    to_json_value(result)
+    to_json_value(&result)
 }
 
 #[cfg(test)]

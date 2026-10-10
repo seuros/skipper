@@ -25,8 +25,8 @@ pub struct PrBuildWaitParams {
 #[derive(Serialize, JsonSchema)]
 pub struct PrBuildResult {
     /// success | failure | cancelled | pending (pending = timed out waiting)
-    pub conclusion: String,
-    /// True when timeout_secs elapsed before the checks finished.
+    pub conclusion: &'static str,
+    /// True when `timeout_secs` elapsed before the checks finished.
     pub timed_out: bool,
     pub counts: CheckCounts,
     /// Failed and cancelled checks, with links to their logs.
@@ -44,14 +44,14 @@ impl PrBuildResult {
         let mut failed = Vec::new();
         let mut pending = Vec::new();
         for check in checks {
-            match check.bucket.as_str() {
+            match check.bucket {
                 "pass" | "skipping" => {}
                 "fail" | "cancel" => failed.push(check),
                 _ => pending.push(check.name),
             }
         }
 
-        Self { conclusion: counts.conclusion().to_string(), timed_out, counts, failed, pending }
+        Self { conclusion: counts.conclusion(), timed_out, counts, failed, pending }
     }
 }
 

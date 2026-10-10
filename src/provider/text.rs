@@ -2,6 +2,8 @@
 
 pub(crate) mod noise;
 
+use std::borrow::Cow;
+
 /// `pr_watch` event bodies are cut past this many chars; the event's `url` and
 /// `skipper://pr/{number}/comments` carry the whole text.
 #[cfg(feature = "github")]
@@ -29,7 +31,8 @@ pub(crate) fn readable(body: &str) -> String {
         }
     }
 
-    let mut lines: Vec<String> = Vec::new();
+    // Lines borrow from `kept`; only a line with an entity to decode is copied.
+    let mut lines: Vec<Cow<'_, str>> = Vec::new();
     let mut in_fence = false;
     for line in kept.lines().map(str::trim_end).filter(|l| !l.trim_start().starts_with("> [!")) {
         if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
@@ -39,35 +42,51 @@ pub(crate) fn readable(body: &str) -> String {
             in_fence = !in_fence;
         }
         // GitHub shows entities decoded, except in code.
-        lines.push(if in_fence { line.to_string() } else { decode_entities(line) });
+        lines.push(if in_fence { Cow::Borrowed(line) } else { decode_entities(line) });
     }
-    let rule = |l: &String| matches!(l.trim(), "" | "---");
+    let rule = |l: &Cow<'_, str>| matches!(l.trim(), "" | "---");
     while lines.last().is_some_and(rule) {
         lines.pop();
     }
     let lead = lines.iter().take_while(|l| rule(l)).count();
-    lines[lead..].join("\n").trim().to_string()
+    let mut out = lines[lead..].join("\n");
+    out.truncate(out.trim_end().len());
+    out.drain(..out.len() - out.trim_start().len());
+    out
 }
 
-/// The entities markdown writers escape; `&amp;` last, so `&amp;lt;` stays text.
-fn decode_entities(line: &str) -> String {
+/// The entities markdown writers escape, decoded in one pass. A decoded
+/// entity is never re-read, so `&amp;lt;` stays text.
+fn decode_entities(line: &str) -> Cow<'_, str> {
+    const ENTITIES: [(&str, char); 5] =
+        [("&lt;", '<'), ("&gt;", '>'), ("&quot;", '"'), ("&#39;", '\''), ("&amp;", '&')];
     if !line.contains('&') {
-        return line.to_string();
+        return Cow::Borrowed(line);
     }
-    line.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let (ch, len) = ENTITIES
+            .iter()
+            .find(|(entity, _)| rest.starts_with(entity))
+            .map_or(('&', 1), |(entity, ch)| (*ch, entity.len()));
+        out.push(ch);
+        rest = &rest[len..];
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
 }
 
-/// `text` cut past `limit` chars, marked with `…`.
+/// `text` cut past `limit` chars, marked with `…`, in place.
 #[cfg(feature = "github")]
-pub(crate) fn clip(text: String, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text,
+pub(crate) fn clip(mut text: String, limit: usize) -> String {
+    if let Some((cut, _)) = text.char_indices().nth(limit) {
+        text.truncate(cut);
+        text.push('…');
     }
+    text
 }
 
 fn html_tag_len(rest: &str) -> Option<usize> {
@@ -78,7 +97,7 @@ fn html_tag_len(rest: &str) -> Option<usize> {
     let inner = rest.strip_prefix('<')?;
     let name = inner.strip_prefix('/').unwrap_or(inner);
     let end = name.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(name.len());
-    if !TAGS.contains(&name[..end].to_ascii_lowercase().as_str()) {
+    if !TAGS.iter().any(|tag| tag.eq_ignore_ascii_case(&name[..end])) {
         return None;
     }
     let close = rest.find('>').filter(|&i| !rest[..i].contains('\n'))?;

@@ -21,7 +21,7 @@ pub struct PrMergeParams {
 #[derive(Serialize, JsonSchema)]
 pub struct PrMergeResult {
     pub pr: u64,
-    pub method: String,
+    pub method: &'static str,
     /// The merge commit.
     pub sha: String,
 }
@@ -67,14 +67,14 @@ impl SkipperServer {
             ),
         )
         .await?;
-        let sha = gh.merge_pr(&repo, number, &method, &pr.head_sha).await.map_err(cli_error)?;
+        let sha = gh.merge_pr(&repo, number, method, &pr.head_sha).await.map_err(cli_error)?;
         structured(PrMergeResult { pr: number, method, sha })
     }
 }
 
 /// The method to merge `pr` by, after refusing what GitHub would refuse anyway
 /// with a less useful message.
-fn merge_method(pr: &PrOverview, requested: Option<&str>) -> Result<String, ToolError> {
+fn merge_method(pr: &PrOverview, requested: Option<&str>) -> Result<&'static str, ToolError> {
     let refuse = |why: String| Err(ToolError::InvalidArguments(format!("#{}: {why}", pr.pr)));
     if pr.state != "open" {
         return refuse(format!("is {}", pr.state));
@@ -85,14 +85,15 @@ fn merge_method(pr: &PrOverview, requested: Option<&str>) -> Result<String, Tool
     if pr.mergeable == "conflicting" {
         return refuse(format!("conflicts with {}", pr.base));
     }
-    let method = requested.map_or_else(|| pr.default_method.clone(), str::to_lowercase);
-    if !pr.merge_methods.contains(&method) {
-        return refuse(format!(
-            "the repo does not allow {method}; allowed: {}",
+    let wanted = requested.unwrap_or(&pr.default_method);
+    match pr.merge_methods.iter().find(|method| method.eq_ignore_ascii_case(wanted)) {
+        Some(method) => Ok(method),
+        None => refuse(format!(
+            "the repo does not allow {}; allowed: {}",
+            wanted.to_ascii_lowercase(),
             pr.merge_methods.join(", ")
-        ));
+        )),
     }
-    Ok(method)
 }
 
 #[cfg(test)]

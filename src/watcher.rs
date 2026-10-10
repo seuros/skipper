@@ -1,257 +1,149 @@
 use crate::error::{CliError, Result};
 use crate::provider::BoxFuture;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{RwLock, mpsc};
+use std::collections::BTreeSet;
+use std::fmt::{Display, Write as _};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Notification {
-    pub watcher: String,
+    pub watcher: &'static str,
     pub message: String,
     pub data: Value,
-    pub timestamp: String,
 }
 
 impl Notification {
-    pub fn new(watcher: impl Into<String>, message: impl Into<String>, data: Value) -> Self {
-        Self {
-            watcher: watcher.into(),
-            message: message.into(),
-            data,
-            timestamp: jiff::Timestamp::now().to_string(),
-        }
-    }
-
-    fn of_state(watcher: &str, message: impl Into<String>, state: &WatcherState) -> Self {
-        Self::new(watcher, message, serde_json::to_value(state).unwrap_or(Value::Null))
+    fn of_state(watcher: &'static str, message: String, state: &WatcherState) -> Self {
+        let data = serde_json::to_value(state).unwrap_or_else(|e| {
+            tracing::warn!(watcher, error = %e, "watcher state did not serialize");
+            Value::Null
+        });
+        Self { watcher, message, data }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WatcherState {
     GitDirty {
-        staged: u32,
-        modified: u32,
-        untracked: u32,
+        staged: usize,
+        modified: usize,
+        untracked: usize,
     },
     Forges {
         has_repo: bool,
-        forges: Vec<String>,
+        forges: BTreeSet<&'static str>,
         /// The remote forge reads go to, as `name (forge)`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(skip_serializing_if = "Option::is_none")]
         current: Option<String>,
     },
-    Custom(Value),
 }
 
-impl WatcherState {
-    pub fn is_clean(&self) -> bool {
-        match self {
-            Self::GitDirty { staged, modified, untracked } => {
-                *staged == 0 && *modified == 0 && *untracked == 0
-            }
-            _ => false,
+/// `prefix` then `label: old → new` for every field that moved; `None` when
+/// none did.
+fn changes<T: PartialEq + Display>(prefix: &str, fields: &[(&str, T, T)]) -> Option<String> {
+    let mut out = String::from(prefix);
+    for (label, old, new) in fields.iter().filter(|(_, old, new)| old != new) {
+        if out.len() > prefix.len() {
+            out.push_str(", ");
         }
+        write!(out, "{label}: {old} → {new}").expect("writing to a String cannot fail");
     }
-}
-
-fn changes<T: PartialEq + std::fmt::Display>(fields: &[(&str, T, T)]) -> Option<String> {
-    let parts: Vec<String> = fields
-        .iter()
-        .filter(|(_, old, new)| old != new)
-        .map(|(label, old, new)| format!("{label}: {old} → {new}"))
-        .collect();
-    (!parts.is_empty()).then(|| parts.join(", "))
+    (out.len() > prefix.len()).then_some(out)
 }
 
 pub type WatcherResult = Result<WatcherState>;
 
 pub trait Watcher: Send + Sync {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 
     fn interval(&self) -> Duration;
 
     fn check(&self) -> BoxFuture<'_, WatcherResult>;
 
     fn on_change(&self, old: &WatcherState, new: &WatcherState) -> Option<Notification>;
-
-    fn done(&self, _state: &WatcherState) -> bool {
-        false
-    }
 }
 
 pub struct WatcherManager {
     tx: mpsc::UnboundedSender<Notification>,
-    state: Arc<RwLock<HashMap<String, WatcherState>>>,
-    last_change: Arc<RwLock<HashMap<String, Instant>>>,
     debounce: Duration,
-    tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
-    active: Arc<std::sync::RwLock<HashSet<String>>>,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl WatcherManager {
     pub fn new(tx: mpsc::UnboundedSender<Notification>) -> Self {
-        Self {
-            tx,
-            state: Arc::default(),
-            last_change: Arc::default(),
-            debounce: Duration::from_secs(2),
-            tasks: Arc::default(),
-            active: Arc::default(),
-        }
+        Self { tx, debounce: Duration::from_secs(2), tasks: Mutex::default() }
     }
 
-    pub fn with_debounce(mut self, duration: Duration) -> Self {
-        self.debounce = duration;
-        self
-    }
-
-    pub async fn add(&self, watcher: Arc<dyn Watcher>) {
-        let name = watcher.name().to_string();
-        let key = name.clone();
-        let interval = watcher.interval();
-
+    /// Polls `watcher` on its interval. The first state is the baseline; a
+    /// later one that differs is reported unless the last report is younger
+    /// than the debounce, in which case it is compared again next tick.
+    pub fn add(&self, watcher: Arc<dyn Watcher>) {
         let tx = self.tx.clone();
-        let state = self.state.clone();
-        let last_change = self.last_change.clone();
         let debounce = self.debounce;
-        let active = self.active.clone();
-
-        active.write().expect("active watcher lock").insert(name.clone());
 
         let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
+            let name = watcher.name();
+            let mut ticker = tokio::time::interval(watcher.interval());
+            let mut reported: Option<(WatcherState, Instant)> = None;
 
             loop {
                 ticker.tick().await;
 
-                let new_state = match watcher.check().await {
-                    Ok(s) => s,
+                let state = match watcher.check().await {
+                    Ok(state) => state,
                     Err(e) => {
-                        tracing::warn!(
-                            watcher = name,
-                            error = ?e,
-                            "watcher check failed"
-                        );
+                        tracing::warn!(watcher = name, error = ?e, "watcher check failed");
                         continue;
                     }
                 };
 
-                let old_state = state.read().await.get(&name).cloned();
-
-                let changed = match &old_state {
-                    Some(old) => old != &new_state,
-                    None => true,
+                let now = Instant::now();
+                let old = match &reported {
+                    None => &state,
+                    Some((old, _)) if *old == state => continue,
+                    Some((_, at)) if now.duration_since(*at) < debounce => continue,
+                    Some((old, _)) => old,
                 };
 
-                if changed {
-                    let now = Instant::now();
-                    let should_notify = {
-                        let last = last_change.read().await;
-                        match last.get(&name) {
-                            Some(t) => now.duration_since(*t) >= debounce,
-                            None => true,
-                        }
-                    };
-
-                    if should_notify {
-                        state.write().await.insert(name.clone(), new_state.clone());
-                        last_change.write().await.insert(name.clone(), now);
-
-                        if let Some(notification) =
-                            watcher.on_change(old_state.as_ref().unwrap_or(&new_state), &new_state)
-                            && let Err(e) = tx.send(notification)
-                        {
-                            tracing::error!(
-                                watcher = name,
-                                error = ?e,
-                                "failed to send notification"
-                            );
-                        }
-                    }
+                if let Some(notification) = watcher.on_change(old, &state)
+                    && let Err(e) = tx.send(notification)
+                {
+                    tracing::error!(watcher = name, error = ?e, "failed to send notification");
                 }
-
-                if watcher.done(&new_state) {
-                    state.write().await.insert(name.clone(), new_state);
-                    active.write().expect("active watcher lock").remove(&name);
-                    tracing::info!(watcher = name, "watcher reached terminal state, stopping");
-                    break;
-                }
+                reported = Some((state, now));
             }
         });
 
-        if let Some(old) = self.tasks.write().await.insert(key, handle) {
-            old.abort();
-        }
+        self.tasks.lock().expect("watcher tasks lock").push(handle);
     }
 
-    pub async fn remove(&self, name: &str) -> bool {
-        let removed = match self.tasks.write().await.remove(name) {
-            Some(handle) => {
-                handle.abort();
-                true
-            }
-            None => false,
-        };
-        let was_active = self.active.write().expect("active watcher lock").remove(name);
-        self.state.write().await.remove(name);
-        self.last_change.write().await.remove(name);
-        removed || was_active
-    }
-
-    pub fn active_names(&self) -> Vec<String> {
-        self.active.read().expect("active watcher lock").iter().cloned().collect()
-    }
-
-    pub fn has_build_watches(&self) -> bool {
-        self.active
-            .read()
-            .expect("active watcher lock")
-            .iter()
-            .any(|name| name.starts_with("build_"))
-    }
-
-    pub async fn get_state(&self, name: &str) -> Option<WatcherState> {
-        self.state.read().await.get(name).cloned()
-    }
-
-    pub async fn states(&self) -> HashMap<String, WatcherState> {
-        self.state.read().await.clone()
-    }
-
-    pub fn watching(&self, name: &str) -> bool {
-        self.active.read().expect("active watcher lock").contains(name)
-    }
-
-    pub async fn stop(&self) {
-        let mut tasks = self.tasks.write().await;
-        for (_, task) in tasks.drain() {
+    pub fn stop(&self) {
+        for task in self.tasks.lock().expect("watcher tasks lock").drain(..) {
             task.abort();
         }
-        self.active.write().expect("active watcher lock").clear();
     }
 }
 
 pub struct GitStatusWatcher {
     cwd: std::path::PathBuf,
-    name: String,
     interval: Duration,
 }
 
 impl GitStatusWatcher {
     pub fn new(cwd: impl Into<std::path::PathBuf>) -> Self {
-        Self { cwd: cwd.into(), name: "git_status".to_string(), interval: Duration::from_secs(5) }
+        Self { cwd: cwd.into(), interval: Duration::from_secs(5) }
     }
 }
 
 impl Watcher for GitStatusWatcher {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        "git_status"
     }
 
     fn interval(&self) -> Duration {
@@ -260,51 +152,49 @@ impl Watcher for GitStatusWatcher {
 
     fn check(&self) -> BoxFuture<'_, WatcherResult> {
         Box::pin(async move {
-            let status = crate::git::status(&self.cwd)
+            let counts = crate::git::status_counts(&self.cwd)
                 .map_err(|e| CliError::execution_failed("git", 1, e.to_string()))?;
             Ok(WatcherState::GitDirty {
-                staged: status.staged.len() as u32,
-                modified: status.unstaged.len() as u32,
-                untracked: status.untracked.len() as u32,
+                staged: counts.staged,
+                modified: counts.unstaged,
+                untracked: counts.untracked,
             })
         })
     }
 
     fn on_change(&self, old: &WatcherState, new: &WatcherState) -> Option<Notification> {
-        let message = match (old, new) {
-            (
-                WatcherState::GitDirty { staged: old_s, modified: old_m, untracked: old_u },
-                WatcherState::GitDirty { staged: new_s, modified: new_m, untracked: new_u },
-            ) => {
-                let parts = changes(&[
-                    ("staged", old_s, new_s),
-                    ("modified", old_m, new_m),
-                    ("untracked", old_u, new_u),
-                ])?;
-                format!("Git status changed: {parts}")
-            }
-            _ => return None,
+        let (
+            WatcherState::GitDirty { staged: old_s, modified: old_m, untracked: old_u },
+            WatcherState::GitDirty { staged: new_s, modified: new_m, untracked: new_u },
+        ) = (old, new)
+        else {
+            return None;
         };
+        let message = changes(
+            "Git status changed: ",
+            &[("staged", old_s, new_s), ("modified", old_m, new_m), ("untracked", old_u, new_u)],
+        )?;
 
-        Some(Notification::of_state(&self.name, message, new))
+        Some(Notification::of_state(self.name(), message, new))
     }
 }
 
 pub struct RemoteWatcher {
     env: Arc<crate::environment::SkipperEnvironment>,
-    name: String,
     interval: Duration,
 }
 
 impl RemoteWatcher {
-    pub fn new(env: Arc<crate::environment::SkipperEnvironment>) -> Self {
-        Self { env, name: "remotes".to_string(), interval: Duration::from_secs(5) }
+    pub const NAME: &'static str = "remotes";
+
+    pub const fn new(env: Arc<crate::environment::SkipperEnvironment>) -> Self {
+        Self { env, interval: Duration::from_secs(5) }
     }
 }
 
 impl Watcher for RemoteWatcher {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        Self::NAME
     }
 
     fn interval(&self) -> Duration {
@@ -315,19 +205,11 @@ impl Watcher for RemoteWatcher {
         Box::pin(async move {
             use crate::environment::Environment as _;
 
-            self.env.refresh().await;
-            let current =
-                crate::git::current_remote(self.env.cwd()).ok().flatten().map(|remote| match self
-                    .env
-                    .forge_for_url(&remote.url)
-                {
-                    Some(forge) => format!("{} ({forge})", remote.name),
-                    None => remote.name,
-                });
+            self.env.refresh();
             Ok(WatcherState::Forges {
                 has_repo: self.env.has_git_repo(),
-                forges: self.env.forges().into_iter().map(str::to_string).collect(),
-                current,
+                forges: self.env.forges(),
+                current: self.env.current_remote_label(),
             })
         })
     }
@@ -350,14 +232,21 @@ impl Watcher for RemoteWatcher {
         } else if forges.is_empty() {
             "No remote maps to a known forge; forge tools hidden".to_string()
         } else {
-            format!("Forges available: {}", forges.join(", "))
+            let mut message = String::from("Forges available: ");
+            for (i, forge) in forges.iter().enumerate() {
+                if i > 0 {
+                    message.push_str(", ");
+                }
+                message.push_str(forge);
+            }
+            message
         };
         if *has_repo && old_current != current {
-            message
-                .push_str(&format!("; current remote: {}", current.as_deref().unwrap_or("none")));
+            message.push_str("; current remote: ");
+            message.push_str(current.as_deref().unwrap_or("none"));
         }
 
-        Some(Notification::of_state(&self.name, message, new))
+        Some(Notification::of_state(Self::NAME, message, new))
     }
 }
 

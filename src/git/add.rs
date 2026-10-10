@@ -1,7 +1,5 @@
-use std::collections::BTreeSet;
 use std::path::Path;
 
-use gix::bstr::BString;
 use gix::bstr::ByteSlice;
 use serde::Serialize;
 
@@ -42,114 +40,86 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
         )
         .map_err(|e| GitError::Operation(format!("{e:#}")))?;
 
-    let mut normalized_paths = Vec::with_capacity(paths.len());
-    let mut seen = BTreeSet::new();
+    let mut normalized_paths: Vec<String> = Vec::with_capacity(paths.len());
     for path in paths {
         let normalized = normalize_explicit_path(path)?;
-        if seen.insert(normalized.clone()) {
+        if !normalized_paths.contains(&normalized) {
             normalized_paths.push(normalized);
         }
     }
 
+    let unconflicted = gix::index::entry::Flags::from_stage(gix::index::entry::Stage::Unconflicted);
     let mut staged = Vec::new();
     let mut removed = Vec::new();
+    // New entries, pushed after the loop and sorted once: pushing one unsorts
+    // the index the later lookups binary-search, and each sort allocates.
+    let mut new_entries = Vec::new();
 
-    for path in normalized_paths {
-        let display_path = path.to_string();
-        let range = index.entry_range(path.as_bstr());
-        let tracked = range.is_some();
-
-        if let Some(range) = range {
-            let entries = &index.entries()[range];
-            if entries.iter().any(|entry| entry.stage() != gix::index::entry::Stage::Unconflicted) {
-                return Err(GitError::Conflict(display_path));
-            }
-            if entries.iter().any(|entry| entry.mode == gix::index::entry::Mode::COMMIT) {
+    for display_path in normalized_paths {
+        let path = display_path.as_bytes().as_bstr();
+        let tracked = match tracked_entries(&index, path) {
+            Ok(tracked) => tracked,
+            Err(Unstageable::Conflict) => return Err(GitError::Conflict(display_path)),
+            Err(Unstageable::Submodule) => {
                 return Err(GitError::Unsupported(format!(
                     "submodule staging is not supported: {display_path}"
                 )));
             }
-        }
+        };
 
-        let worktree_path = repo
-            .workdir_path(path.as_bstr())
-            .ok_or_else(|| GitError::PathNotFound(display_path.clone()))?;
+        let worktree_path =
+            repo.workdir_path(path).ok_or_else(|| GitError::PathNotFound(display_path.clone()))?;
         let metadata = match gix::index::fs::Metadata::from_path_no_follow(&worktree_path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 if !tracked {
                     return Err(GitError::PathNotFound(display_path));
                 }
-                index.remove_entries(|_, entry_path, _| entry_path == path.as_bstr());
+                index.remove_entries(|_, entry_path, _| entry_path == path);
                 removed.push(display_path);
                 continue;
             }
             Err(err) => return Err(GitError::Operation(format!("{err:#}"))),
         };
 
-        if metadata.is_dir() {
-            return Err(GitError::Unsupported(format!(
-                "directory staging is not supported; pass files explicitly: {display_path}"
-            )));
-        }
-        if !metadata.is_file() && !metadata.is_symlink() {
-            return Err(GitError::Unsupported(format!(
-                "unsupported worktree entry type: {display_path}"
-            )));
-        }
-
-        let mode = if metadata.is_symlink() {
-            gix::index::entry::Mode::SYMLINK
-        } else if metadata.is_executable() {
-            gix::index::entry::Mode::FILE_EXECUTABLE
-        } else {
-            gix::index::entry::Mode::FILE
-        };
+        let mode = worktree_mode(&metadata, &display_path)?;
 
         if !tracked
             && excludes
-                .at_entry(path.as_bstr(), Some(mode))
+                .at_entry(path, Some(mode))
                 .map_err(|e| GitError::Operation(format!("{e:#}")))?
                 .is_excluded()
         {
             return Err(GitError::IgnoredPath(display_path));
         }
 
-        let Some((id, kind, _)) = pipeline
-            .worktree_file_to_object(path.as_bstr(), &index)
-            .map_err(|e| GitError::Operation(format!("{e:#}")))?
-        else {
-            return Err(GitError::Unsupported(format!(
-                "unable to stage worktree entry: {display_path}"
-            )));
-        };
-        if kind == gix::objs::tree::EntryKind::Commit {
-            return Err(GitError::Unsupported(format!(
-                "submodule staging is not supported: {display_path}"
-            )));
-        }
-
+        let (id, kind) = worktree_blob(&mut pipeline, &index, path, &display_path)?;
         let stat = gix::index::entry::Stat::from_fs(&metadata)
             .map_err(|e| GitError::Operation(format!("{e:#}")))?;
-        if let Some(entry) = index
-            .entry_mut_by_path_and_stage(path.as_bstr(), gix::index::entry::Stage::Unconflicted)
+        if let Some(entry) =
+            index.entry_mut_by_path_and_stage(path, gix::index::entry::Stage::Unconflicted)
         {
             entry.stat = stat;
             entry.id = id;
-            entry.flags =
-                gix::index::entry::Flags::from_stage(gix::index::entry::Stage::Unconflicted);
+            entry.flags = unconflicted;
             entry.mode = kind.into();
         } else {
+            new_entries.push((stat, id, kind, staged.len()));
+        }
+        staged.push(display_path);
+    }
+
+    if !new_entries.is_empty() {
+        for (stat, id, kind, at) in new_entries {
             index.dangerously_push_entry(
                 stat,
                 id,
-                gix::index::entry::Flags::from_stage(gix::index::entry::Stage::Unconflicted),
+                unconflicted,
                 kind.into(),
-                path.as_bstr(),
+                staged[at].as_bytes().as_bstr(),
             );
-            index.sort_entries();
         }
-        staged.push(display_path);
+        index.sort_entries();
     }
 
     index.remove_tree();
@@ -160,7 +130,75 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
     Ok(AddResult { staged, removed })
 }
 
-fn normalize_explicit_path(raw: &str) -> Result<BString, GitError> {
+/// Why a tracked path cannot be staged.
+enum Unstageable {
+    Conflict,
+    Submodule,
+}
+
+/// Whether `path` is tracked, refusing conflicted entries and submodules.
+fn tracked_entries(index: &gix::index::File, path: &gix::bstr::BStr) -> Result<bool, Unstageable> {
+    let Some(range) = index.entry_range(path) else {
+        return Ok(false);
+    };
+    let entries = &index.entries()[range];
+    if entries.iter().any(|entry| entry.stage() != gix::index::entry::Stage::Unconflicted) {
+        return Err(Unstageable::Conflict);
+    }
+    if entries.iter().any(|entry| entry.mode == gix::index::entry::Mode::COMMIT) {
+        return Err(Unstageable::Submodule);
+    }
+    Ok(true)
+}
+
+/// The worktree file at `path` written as a blob, through the filters.
+fn worktree_blob(
+    pipeline: &mut gix::filter::Pipeline<'_>,
+    index: &gix::index::File,
+    path: &gix::bstr::BStr,
+    display_path: &str,
+) -> Result<(gix::ObjectId, gix::objs::tree::EntryKind), GitError> {
+    let Some((id, kind, _)) = pipeline
+        .worktree_file_to_object(path, index)
+        .map_err(|e| GitError::Operation(format!("{e:#}")))?
+    else {
+        return Err(GitError::Unsupported(format!(
+            "unable to stage worktree entry: {display_path}"
+        )));
+    };
+    if kind == gix::objs::tree::EntryKind::Commit {
+        return Err(GitError::Unsupported(format!(
+            "submodule staging is not supported: {display_path}"
+        )));
+    }
+    Ok((id, kind))
+}
+
+/// The index mode of a worktree file or symlink; anything else is refused.
+fn worktree_mode(
+    metadata: &gix::index::fs::Metadata,
+    display_path: &str,
+) -> Result<gix::index::entry::Mode, GitError> {
+    if metadata.is_dir() {
+        return Err(GitError::Unsupported(format!(
+            "directory staging is not supported; pass files explicitly: {display_path}"
+        )));
+    }
+    if !metadata.is_file() && !metadata.is_symlink() {
+        return Err(GitError::Unsupported(format!(
+            "unsupported worktree entry type: {display_path}"
+        )));
+    }
+    Ok(if metadata.is_symlink() {
+        gix::index::entry::Mode::SYMLINK
+    } else if metadata.is_executable() {
+        gix::index::entry::Mode::FILE_EXECUTABLE
+    } else {
+        gix::index::entry::Mode::FILE
+    })
+}
+
+fn normalize_explicit_path(raw: &str) -> Result<String, GitError> {
     normalize_repo_relative_path(
         raw,
         RepoRelativePathMessages {
@@ -170,5 +208,4 @@ fn normalize_explicit_path(raw: &str) -> Result<BString, GitError> {
             git_dir: "paths inside the Git directory cannot be staged",
         },
     )
-    .map(Into::into)
 }

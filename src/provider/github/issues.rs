@@ -1,9 +1,10 @@
 //! Issues of an explicit repository: the list over GraphQL, which leaves pull
 //! requests out and sorts by update; one issue and its comments over REST.
 
-use serde::Deserialize;
+use serde::de::IgnoredAny;
+use serde::{Deserialize, Serialize};
 
-use super::{GitHubProvider, PAGE, User, login};
+use super::{GitHubProvider, PAGE, User, login, lowercase, rest_url};
 use crate::error::{CliError, Result};
 use crate::provider::issues::{IssueNote, IssueSummary, IssueThread, LIST_LIMIT};
 use crate::provider::text::readable_by;
@@ -29,15 +30,20 @@ impl GitHubProvider {
         name: &str,
         state: &str,
     ) -> Result<Vec<IssueSummary>> {
-        let states = match state {
-            "open" => serde_json::json!(["OPEN"]),
-            "closed" => serde_json::json!(["CLOSED"]),
-            _ => serde_json::Value::Null,
+        #[derive(Serialize)]
+        struct Variables<'a> {
+            owner: &'a str,
+            name: &'a str,
+            first: usize,
+            states: Option<&'static [&'static str]>,
+        }
+        let states: Option<&'static [&'static str]> = match state {
+            "open" => Some(&["OPEN"]),
+            "closed" => Some(&["CLOSED"]),
+            _ => None,
         };
-        let variables = serde_json::json!({
-            "owner": owner, "name": name, "first": LIST_LIMIT, "states": states,
-        });
-        let data: GqlData = self.graphql(host, LIST_QUERY, variables).await?;
+        let variables = Variables { owner, name, first: LIST_LIMIT, states };
+        let data: GqlData = self.graphql(host, LIST_QUERY, &variables).await?;
         let repository = data.repository.ok_or_else(|| {
             CliError::no_target(format!("no repository {owner}/{name} on {host}"))
         })?;
@@ -52,21 +58,23 @@ impl GitHubProvider {
         name: &str,
         number: u64,
     ) -> Result<Option<IssueThread>> {
-        let base = format!(
-            "repos/{}/{}/issues/{number}",
-            urlencoding::encode(owner),
-            urlencoding::encode(name)
-        );
-        let issue: RestIssue = self.api_json_at(host, &base).await?;
+        let base = std::fmt::from_fn(|f| {
+            write!(
+                f,
+                "repos/{}/{}/issues/{number}",
+                urlencoding::encode(owner),
+                urlencoding::encode(name)
+            )
+        });
+        let issue: RestIssue = self.api_json_at(host, &rest_url(host, &base)).await?;
         if issue.pull_request.is_some() {
             return Ok(None);
         }
 
         let mut notes = Vec::new();
         for page in 1.. {
-            let batch: Vec<RestComment> = self
-                .api_json_at(host, &format!("{base}/comments?per_page={PAGE}&page={page}"))
-                .await?;
+            let url = rest_url(host, format_args!("{base}/comments?per_page={PAGE}&page={page}"));
+            let batch: Vec<RestComment> = self.api_json_at(host, &url).await?;
             let full = batch.len() == PAGE;
             notes.extend(batch.into_iter().map(RestComment::into_note));
             if !full {
@@ -134,7 +142,7 @@ impl GqlIssue {
         IssueSummary {
             number: self.number,
             title: self.title,
-            state: self.state.to_lowercase(),
+            state: lowercase(self.state),
             author: login(self.author),
             labels: self
                 .labels
@@ -159,7 +167,7 @@ struct RestIssue {
     assignees: Option<Vec<User>>,
     body: Option<String>,
     /// Present only when the number is a pull request.
-    pull_request: Option<serde_json::Value>,
+    pull_request: Option<IgnoredAny>,
 }
 
 #[derive(Deserialize)]

@@ -2,10 +2,10 @@ use super::{
     Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
     mcp_tool,
 };
-use crate::pr_watch::{EventKind, PrEvent, PrSnapshot};
+use crate::pr_watch::{EventKind, EventKinds, PrEvent, PrSnapshot};
 use mcp_host::prelude::structured;
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Deserialize, JsonSchema)]
@@ -24,14 +24,14 @@ pub struct PrWatchParams {
 pub struct PrWatchResult {
     /// PR this call added or updated.
     pub pr: u64,
-    /// false: another pr_watch call is blocking and will report this PR too.
+    /// false: another `pr_watch` call is blocking and will report this PR too.
     pub blocked: bool,
     /// Events on any watched PR, oldest first. Merged/closed/error end that PR's watch.
     pub events: Vec<PrEvent>,
-    /// wait_secs ran out; the watch continues. Call again to keep waiting.
+    /// `wait_secs` ran out; the watch continues. Call again to keep waiting.
     pub timed_out: bool,
     /// PRs still watched.
-    pub watching: Vec<PrSnapshot>,
+    pub watching: Vec<Arc<PrSnapshot>>,
 }
 
 impl SkipperServer {
@@ -51,7 +51,7 @@ impl SkipperServer {
             ));
         }
 
-        let until = params.0.until.map_or_else(EventKind::all, BTreeSet::from_iter);
+        let until = params.0.until.map_or(EventKinds::ALL, EventKinds::from_iter);
         let (pr, _) = self
             .pr_watcher
             .add(params.0.pr, params.0.repo.as_deref(), until)

@@ -91,24 +91,24 @@ impl CliError {
 
     pub fn cli(&self) -> &str {
         match self {
-            Self::NotInstalled { cli } => cli,
-            Self::VersionTooLow { cli, .. } => cli,
-            Self::AuthRequired { cli } => cli,
-            Self::ExecutionFailed { cli, .. } => cli,
-            Self::ParseError { cli, .. } => cli,
-            Self::Timeout { cli, .. } => cli,
-            Self::Io { cli, .. } => cli,
-            Self::Json { cli, .. } => cli,
-            Self::Unsupported { cli, .. } => cli,
+            Self::NotInstalled { cli }
+            | Self::VersionTooLow { cli, .. }
+            | Self::AuthRequired { cli }
+            | Self::ExecutionFailed { cli, .. }
+            | Self::ParseError { cli, .. }
+            | Self::Timeout { cli, .. }
+            | Self::Io { cli, .. }
+            | Self::Json { cli, .. }
+            | Self::Unsupported { cli, .. } => cli,
             Self::NoTarget(_) => "",
         }
     }
 
-    pub fn is_unavailable(&self) -> bool {
+    pub const fn is_unavailable(&self) -> bool {
         matches!(self, Self::NotInstalled { .. } | Self::VersionTooLow { .. })
     }
 
-    pub fn needs_auth(&self) -> bool {
+    pub const fn needs_auth(&self) -> bool {
         matches!(self, Self::AuthRequired { .. })
     }
 }

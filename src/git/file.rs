@@ -53,17 +53,14 @@ pub fn show_file(
         .detach();
 
     let object = repo.find_object(spec_id).git_op()?;
-    let (sha, tree) = match object.peel_to_commit() {
-        Ok(commit) => {
-            let sha = commit.id().to_string();
-            let tree = commit.tree().git_op()?;
-            (sha, tree)
-        }
-        Err(_) => {
-            let object = repo.find_object(spec_id).git_op()?;
-            let tree = object.peel_to_tree().git_op()?;
-            (spec_id.to_string(), tree)
-        }
+    let (sha, tree) = if let Ok(commit) = object.peel_to_commit() {
+        let sha = commit.id().to_string();
+        let tree = commit.tree().git_op()?;
+        (sha, tree)
+    } else {
+        let object = repo.find_object(spec_id).git_op()?;
+        let tree = object.peel_to_tree().git_op()?;
+        (spec_id.to_string(), tree)
     };
 
     let entry = tree
@@ -93,16 +90,18 @@ pub fn show_file(
         )));
     }
 
-    let blob = repo.find_object(blob_id).git_op()?;
-    if is_binary(&blob.data) {
+    // The blob's buffer becomes the content: taken from the object, checked
+    // as UTF-8 in place, and cut to the asked lines without a copy.
+    let data = repo.find_object(blob_id).git_op()?.detach().data;
+    if is_binary(&data) {
         return Err(GitError::Unsupported(format!("binary file: {path}")));
     }
-    let text = std::str::from_utf8(&blob.data)
+    let mut content = String::from_utf8(data)
         .map_err(|_| GitError::Unsupported(format!("binary file: {path}")))?;
 
-    let total_lines = line_count(text);
-    let (start_line, end_line, content) = match lines {
-        None => (None, None, text.to_string()),
+    let total_lines = line_count(&content);
+    let (start_line, end_line) = match lines {
+        None => (None, None),
         Some((start, end)) => {
             if total_lines == 0 || start > total_lines {
                 return Err(GitError::InvalidInput(format!(
@@ -110,7 +109,10 @@ pub fn show_file(
                 )));
             }
             let end = end.min(total_lines);
-            (Some(start), Some(end), slice_lines(text, start, end))
+            let span = line_span(&content, start, end);
+            content.truncate(span.end);
+            content.drain(..span.start);
+            (Some(start), Some(end))
         }
     };
 
@@ -144,7 +146,9 @@ fn line_count(content: &str) -> usize {
     if content.is_empty() { 0 } else { content.lines().count() }
 }
 
-fn slice_lines(content: &str, start: usize, end: usize) -> String {
+/// Byte range of 1-indexed lines `start..=end` in `content`, line endings
+/// included.
+fn line_span(content: &str, start: usize, end: usize) -> std::ops::Range<usize> {
     let mut start_byte = None;
     let mut end_byte = content.len();
     let mut idx = 0usize;
@@ -158,5 +162,5 @@ fn slice_lines(content: &str, start: usize, end: usize) -> String {
             break;
         }
     }
-    content[start_byte.unwrap_or(content.len())..end_byte].to_string()
+    start_byte.unwrap_or(content.len())..end_byte
 }

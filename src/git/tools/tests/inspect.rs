@@ -16,15 +16,7 @@ fn execute_git_log_sizes_by_history_not_by_limit() {
 fn execute_git_blame_includes_head_author_placeholder() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
-
-    git(dir, &["init"]);
-    git(dir, &["config", "user.name", "Test User"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-
-    let file = dir.join("file.txt");
-    fs::write(&file, "alpha\nbeta\n").expect("write file");
-    git(dir, &["add", "file.txt"]);
-    git(dir, &["commit", "-m", "initial"]);
+    repo_with_commit(dir, "alpha\nbeta\n");
 
     let blame_json = execute_git_blame_structured(
         dir,
@@ -39,9 +31,9 @@ fn execute_git_blame_includes_head_author_placeholder() {
     let blamed: Vec<BlameLine> =
         serde_json::from_value(blame_json["lines"].clone()).expect("parse blame json");
     assert_eq!(blamed.len(), 1);
-    assert_eq!(blamed[0].author, "Test User");
+    assert_eq!(&*blamed[0].author, "Test User");
     assert_eq!(blamed[0].content, "alpha");
-    assert!(!blamed[0].sha.is_empty());
+    assert_eq!(blamed[0].sha.len(), 8);
 }
 
 #[test]

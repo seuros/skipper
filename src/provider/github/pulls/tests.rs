@@ -60,20 +60,20 @@ fn test_overview_is_the_merge_decision_and_nothing_else() {
             "additions":16,"deletions":3,"changedFiles":4,"labels":{"nodes":[]}}"#,
     )
     .expect("pull");
-    let check = |workflow: &str, name: &str, bucket: &str| super::super::PrCheck {
+    let check = |workflow: &str, name: &str, bucket: &'static str| super::super::PrCheck {
         name: name.into(),
-        bucket: bucket.into(),
+        bucket,
         workflow: workflow.into(),
         link: None,
         description: None,
     };
-    let verdict = CheckVerdict::of(&[
+    let verdict = CheckVerdict::of(vec![
         check("CI", "lint", "fail"),
         check("CI", "test", "skipping"),
         check("", "codecov", "pass"),
     ]);
 
-    let overview = pull.into_overview(&repo, verdict);
+    let overview = pull.into_overview(repo, verdict);
     assert_eq!(overview.merge_methods, ["squash", "rebase"]);
     assert_eq!(overview.default_method, "squash");
     assert_eq!(overview.author, "ghost");

@@ -38,14 +38,14 @@ async fn test_github_detection() {
 
     match status {
         ProviderStatus::Available { version } => {
-            println!("GitHub CLI available: v{}", version);
+            println!("GitHub CLI available: v{version}");
             assert!(version >= provider.min_version());
         }
         ProviderStatus::NotInstalled => {
             println!("GitHub CLI (gh) not installed - skipping");
         }
         ProviderStatus::VersionTooLow { found, required } => {
-            println!("GitHub CLI version {} < required {} - skipping", found, required);
+            println!("GitHub CLI version {found} < required {required} - skipping");
         }
         ProviderStatus::AuthRequired => {
             println!("GitHub CLI not authenticated - run 'gh auth login'");
@@ -68,14 +68,14 @@ async fn test_tea_detection() {
 
     match status {
         ProviderStatus::Available { version } => {
-            println!("Tea CLI available: v{}", version);
+            println!("Tea CLI available: v{version}");
             assert!(version >= provider.min_version());
         }
         ProviderStatus::NotInstalled => {
             println!("Tea CLI not installed - skipping");
         }
         ProviderStatus::VersionTooLow { found, required } => {
-            println!("Tea CLI version {} < required {} - skipping", found, required);
+            println!("Tea CLI version {found} < required {required} - skipping");
         }
         ProviderStatus::AuthRequired => {
             println!("Tea CLI not authenticated - run 'tea login'");
@@ -98,14 +98,14 @@ async fn test_gitlab_detection() {
 
     match status {
         ProviderStatus::Available { version } => {
-            println!("GitLab CLI available: v{}", version);
+            println!("GitLab CLI available: v{version}");
             assert!(version >= provider.min_version());
         }
         ProviderStatus::NotInstalled => {
             println!("GitLab CLI (glab) not installed - skipping");
         }
         ProviderStatus::VersionTooLow { found, required } => {
-            println!("GitLab CLI version {} < required {} - skipping", found, required);
+            println!("GitLab CLI version {found} < required {required} - skipping");
         }
         ProviderStatus::AuthRequired => {
             println!("GitLab CLI not authenticated - run 'glab auth login'");
@@ -125,16 +125,16 @@ async fn test_registry_detect_all() {
     for (name, status) in &results {
         match status {
             ProviderStatus::Available { version } => {
-                println!("✓ {}: v{}", name, version);
+                println!("✓ {name}: v{version}");
             }
             ProviderStatus::NotInstalled => {
-                println!("✗ {}: not installed", name);
+                println!("✗ {name}: not installed");
             }
             ProviderStatus::VersionTooLow { found, required } => {
-                println!("✗ {}: v{} < v{} (outdated)", name, found, required);
+                println!("✗ {name}: v{found} < v{required} (outdated)");
             }
             ProviderStatus::AuthRequired => {
-                println!("! {}: not authenticated", name);
+                println!("! {name}: not authenticated");
             }
             ProviderStatus::Unreachable => {
                 println!("probe timed out or network failed - skipping");
@@ -144,7 +144,7 @@ async fn test_registry_detect_all() {
     println!("===================================\n");
 
     let enabled: Vec<_> = registry.enabled_names();
-    println!("Enabled providers: {:?}", enabled);
+    println!("Enabled providers: {enabled:?}");
 
     for name in &enabled {
         assert!(registry.is_enabled(name));

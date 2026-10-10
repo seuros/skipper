@@ -2,8 +2,9 @@
 //! runs with their workflow names, and commit statuses, in one query per page.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{GitHubProvider, PrCheck, run_bucket, status_bucket};
 use crate::error::{CliError, Result};
@@ -32,13 +33,24 @@ const QUERY: &str = r"query($owner: String!, $name: String!, $number: Int!, $aft
 impl GitHubProvider {
     /// Checks on the head commit of `pr`; empty when none reported.
     pub async fn pr_checks(&self, repo: &ForgeRepo, pr: u64) -> Result<Vec<PrCheck>> {
+        #[derive(Serialize)]
+        struct Variables<'a> {
+            owner: &'a str,
+            name: &'a str,
+            number: u64,
+            after: Option<&'a str>,
+        }
+
         let mut contexts = Vec::new();
         let mut after: Option<String> = None;
         loop {
-            let variables = serde_json::json!({
-                "owner": repo.owner, "name": repo.name, "number": pr, "after": after,
-            });
-            let data: Data = self.graphql(&repo.host, QUERY, variables).await?;
+            let variables = Variables {
+                owner: &repo.owner,
+                name: &repo.name,
+                number: pr,
+                after: after.as_deref(),
+            };
+            let data: Data = self.graphql(&repo.host, QUERY, &variables).await?;
             let pull = data.repository.and_then(|r| r.pull_request).ok_or_else(|| {
                 CliError::no_target(format!("no pull request #{pr} in {}", repo.full_name()))
             })?;
@@ -65,23 +77,30 @@ impl GitHubProvider {
 /// One check per workflow and name (or status context), the latest kept: a
 /// re-run leaves its earlier attempts in the rollup.
 pub(super) fn latest(contexts: Vec<Context>) -> Vec<PrCheck> {
-    let mut kept: HashMap<(String, String), (Option<String>, PrCheck)> = HashMap::new();
-    let mut order = Vec::new();
-    for context in contexts {
-        let (at, check) = context.into_check();
-        let key = (check.workflow.clone(), check.name.clone());
-        match kept.get(&key) {
-            Some((seen, _)) if *seen >= at => {}
-            Some(_) => {
-                kept.insert(key, (at, check));
-            }
-            None => {
-                order.push(key.clone());
-                kept.insert(key, (at, check));
+    let mut checks: Vec<Option<(Option<String>, PrCheck)>> =
+        contexts.into_iter().map(|context| Some(context.into_check())).collect();
+
+    // Per key, in first-seen order, the index of its latest attempt. Keys
+    // borrow from `checks`, so nothing is copied to dedupe.
+    let mut winners: Vec<usize> = Vec::new();
+    {
+        let mut slots: HashMap<(&str, &str), usize> = HashMap::with_capacity(checks.len());
+        for (i, (at, check)) in checks.iter().flatten().enumerate() {
+            match slots.entry((&check.workflow, &check.name)) {
+                Entry::Vacant(slot) => {
+                    slot.insert(winners.len());
+                    winners.push(i);
+                }
+                Entry::Occupied(slot) => {
+                    let winner = &mut winners[*slot.get()];
+                    if checks[*winner].as_ref().is_some_and(|(seen, _)| seen < at) {
+                        *winner = i;
+                    }
+                }
             }
         }
     }
-    order.into_iter().filter_map(|key| kept.remove(&key)).map(|(_, check)| check).collect()
+    winners.into_iter().filter_map(|i| checks[i].take()).map(|(_, check)| check).collect()
 }
 
 #[derive(Deserialize)]
@@ -191,7 +210,7 @@ impl Context {
             Self::CheckRun(run) => (
                 run.started_at,
                 PrCheck {
-                    bucket: run_bucket(&run.status, run.conclusion.as_deref()).to_string(),
+                    bucket: run_bucket(&run.status, run.conclusion.as_deref()),
                     workflow: run
                         .check_suite
                         .and_then(|s| s.workflow_run)
@@ -205,7 +224,7 @@ impl Context {
             Self::StatusContext(status) => (
                 status.created_at,
                 PrCheck {
-                    bucket: status_bucket(&status.state).to_string(),
+                    bucket: status_bucket(&status.state),
                     workflow: String::new(),
                     name: status.context,
                     link: present(status.target_url),

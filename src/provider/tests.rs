@@ -14,7 +14,7 @@ fn test_provider_status() {
 #[test]
 fn test_registry_new() {
     let registry = Registry::new();
-    assert!(registry.enabled_names().is_empty());
+    assert_eq!(registry.enabled_names(), Vec::<&str>::new());
 }
 
 #[cfg(any(feature = "github", feature = "gitlab"))]
@@ -69,9 +69,9 @@ async fn test_unreachable_provider_recovers_through_retry() {
 
 #[test]
 fn test_conclusion_of_runs() {
-    let run = |status: &str| BuildRun {
+    let run = |status: &'static str| BuildRun {
         id: "1".into(),
-        status: status.into(),
+        status,
         branch: None,
         workflow: None,
         title: None,

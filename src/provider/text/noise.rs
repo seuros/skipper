@@ -41,13 +41,18 @@ pub(crate) fn strip<'a>(author: &str, body: &'a str) -> Cow<'a, str> {
 fn release_please(body: &str) -> String {
     const NOISE: [&str; 2] =
         [":robot: I have created a release", "This PR was generated with [Release Please]"];
-    body.lines()
-        .filter(|line| !NOISE.iter().any(|n| line.trim_start().starts_with(n)))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines().filter(|line| !NOISE.iter().any(|n| line.trim_start().starts_with(n)))
+    {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(line);
+    }
+    out
 }
 
-/// `<details>` blocks CodeRabbit fills with machinery, by summary.
+/// `<details>` blocks `CodeRabbit` fills with machinery, by summary.
 const CODERABBIT_BLOCKS: &[&str] = &[
     "supported by static analysis",
     "analysis chain",
@@ -149,7 +154,7 @@ fn coderabbit(body: &str) -> String {
     kept.join("\n")
 }
 
-/// A task-list item: CodeRabbit renders its buttons as these.
+/// A task-list item: `CodeRabbit` renders its buttons as these.
 fn is_checkbox(line: &str) -> bool {
     ["- [ ]", "- [x]", "- [X]"].iter().any(|b| line.starts_with(b))
 }
@@ -159,20 +164,27 @@ fn heading_level(line: &str) -> Option<usize> {
     (1..=6).contains(&level).then_some(level).filter(|&l| line[l..].starts_with(' '))
 }
 
-/// Lowercase words of `text`, without markup and emoji.
+/// Lowercase words of `text`, without markup and emoji, one space apart.
 fn plain(text: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(text.len());
     let mut in_tag = false;
+    let mut gap = false;
     for c in text.chars() {
         match c {
             '<' => in_tag = true,
             '>' => in_tag = false,
             _ if in_tag => {}
-            c if c.is_ascii_alphanumeric() || c == ' ' || c == ':' => out.push(c),
-            _ => out.push(' '),
+            c if c.is_ascii_alphanumeric() || c == ':' => {
+                if gap && !out.is_empty() {
+                    out.push(' ');
+                }
+                gap = false;
+                out.push(c.to_ascii_lowercase());
+            }
+            _ => gap = true,
         }
     }
-    out.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    out
 }
 
 /// Plain summaries of every `<details>` block, nested ones included.
@@ -187,30 +199,35 @@ fn summaries(body: &str) -> impl Iterator<Item = String> + '_ {
 /// nested blocks included; the rest is left as written.
 pub(crate) fn drop_blocks(body: &str, drop: &dyn Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(body.len());
+    drop_blocks_into(&mut out, body, drop);
+    out
+}
+
+/// [`drop_blocks`] into `out`: nested blocks are written in place, not built
+/// apart and copied up a level.
+fn drop_blocks_into(out: &mut String, body: &str, drop: &dyn Fn(&str) -> bool) {
     let mut rest = body;
     while let Some(start) = rest.find("<details") {
         out.push_str(&rest[..start]);
         let block = &rest[start..];
         let Some(len) = block_len(block) else {
             out.push_str(block);
-            return out;
+            return;
         };
         let (block, after) = block.split_at(len);
         let opening = block.find('>').map_or(block.len(), |i| i + 1);
-        let summary_end = summary_span(&block[opening..]).map(|(_, end)| opening + end);
-        let summary =
-            summary_span(&block[opening..]).map(|(text, _)| plain(text)).unwrap_or_default();
+        let span = summary_span(&block[opening..]);
+        let summary = span.map(|(text, _)| plain(text)).unwrap_or_default();
         if !drop(&summary) {
-            let inner_start = summary_end.unwrap_or(opening);
+            let inner_start = span.map_or(opening, |(_, end)| opening + end);
             let inner_end = block.len() - "</details>".len();
             out.push_str(&block[..inner_start]);
-            out.push_str(&drop_blocks(&block[inner_start..inner_end], drop));
+            drop_blocks_into(out, &block[inner_start..inner_end], drop);
             out.push_str("</details>");
         }
         rest = after;
     }
     out.push_str(rest);
-    out
 }
 
 /// Length of the `<details>` block `block` starts with, through its matching

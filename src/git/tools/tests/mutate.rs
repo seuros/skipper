@@ -44,7 +44,7 @@ fn execute_git_add_and_commit_create_initial_and_followup_commits() {
     assert_eq!(committed["subject"], "initial commit");
     assert_eq!(committed["trailers"], serde_json::json!([]));
     assert_eq!(committed["committed_paths"], serde_json::json!(["file.txt"]));
-    assert!(!committed["sha"].as_str().unwrap_or_default().is_empty());
+    assert_ne!(committed["sha"].as_str().unwrap_or_default(), "");
     assert_eq!(git_output(dir, &["show", "HEAD:file.txt"]), "alpha\n");
     assert!(!dir.join("hook-ran").exists(), "Git hooks must not run");
 
@@ -381,4 +381,24 @@ fn execute_git_commit_rejects_amend_without_head_commit() {
     .expect_err("unborn HEAD must not be amendable");
 
     assert!(error.to_string().contains("cannot amend because HEAD has no commit"));
+}
+
+#[test]
+fn execute_git_add_stages_several_new_files_in_one_call() {
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path();
+    repo_with_commit(dir, "alpha\n");
+    for name in ["zeta.txt", "beta.txt", "file.txt"] {
+        fs::write(dir.join(name), format!("{name} changed\n")).expect("write file");
+    }
+
+    let paths = ["zeta.txt", "beta.txt", "file.txt", "zeta.txt"].map(String::from).to_vec();
+    let added = execute_git_add_structured(dir, GitAddParams { paths }).expect("add");
+    assert_eq!(added["staged"], serde_json::json!(["zeta.txt", "beta.txt", "file.txt"]));
+
+    // git itself reads the written index: sorted, every entry there.
+    assert_eq!(
+        git_output(dir, &["diff", "--cached", "--name-only"]),
+        "beta.txt\nfile.txt\nzeta.txt\n"
+    );
 }

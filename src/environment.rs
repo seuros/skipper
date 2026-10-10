@@ -1,3 +1,4 @@
+use crate::git::{CurrentRemote, GitError};
 use crate::remote::ForgeHosts;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ struct RepoState {
     has_repo: bool,
     forges: BTreeSet<&'static str>,
     unknown_hosts: BTreeSet<String>,
+    current: Option<CurrentRemote>,
 }
 
 pub struct SkipperEnvironment {
@@ -29,17 +31,17 @@ pub struct SkipperEnvironment {
 }
 
 impl SkipperEnvironment {
-    pub async fn new(cwd: impl Into<PathBuf>) -> Self {
-        Self::with_hosts(cwd, ForgeHosts::with_defaults()).await
+    pub fn new(cwd: impl Into<PathBuf>) -> Self {
+        Self::with_hosts(cwd, ForgeHosts::with_defaults())
     }
 
-    pub async fn with_hosts(cwd: impl Into<PathBuf>, hosts: ForgeHosts) -> Self {
+    pub fn with_hosts(cwd: impl Into<PathBuf>, hosts: ForgeHosts) -> Self {
         let env = Self { cwd: cwd.into(), hosts, state: RwLock::new(RepoState::default()) };
-        env.refresh().await;
+        env.refresh();
         env
     }
 
-    pub async fn refresh(&self) -> bool {
+    pub fn refresh(&self) -> bool {
         let next = self.detect();
 
         let mut state = self.state.write().expect("environment state lock poisoned");
@@ -58,36 +60,54 @@ impl SkipperEnvironment {
         true
     }
 
+    /// One open of the repository: its remotes, their forges, and the
+    /// current remote. Runs before every tool listing and call.
     fn detect(&self) -> RepoState {
-        if crate::git::repo_root(&self.cwd).is_err() {
-            return RepoState::default();
-        }
-
-        let urls: Vec<String> = match crate::git::remotes(&self.cwd) {
-            Ok(info) => info.remotes.into_values().collect(),
+        let (info, current) = match crate::git::remotes_with_current(&self.cwd) {
+            Ok(found) => found,
+            Err(GitError::NotARepo(_)) => return RepoState::default(),
             Err(e) => {
                 tracing::warn!(error = %e, "could not read git remotes; forge tools stay hidden");
-                Vec::new()
+                return RepoState { has_repo: true, ..RepoState::default() };
             }
         };
-
-        RepoState {
-            has_repo: true,
-            forges: self.hosts.providers_for_urls(&urls),
-            unknown_hosts: self.hosts.unknown_hosts(&urls),
-        }
+        let (forges, unknown_hosts) = self.hosts.classify(info.remotes.values());
+        RepoState { has_repo: true, forges, unknown_hosts, current }
     }
 
-    fn state(&self) -> RepoState {
-        self.state.read().expect("environment state lock poisoned").clone()
+    fn state(&self) -> std::sync::RwLockReadGuard<'_, RepoState> {
+        self.state.read().expect("environment state lock poisoned")
     }
 
     pub fn unknown_hosts(&self) -> BTreeSet<String> {
-        self.state().unknown_hosts
+        self.state().unknown_hosts.clone()
+    }
+
+    /// Whether a remote of the workspace is on `forge`, without copying the set.
+    pub fn has_forge(&self, forge: &str) -> bool {
+        self.state().forges.contains(forge)
     }
 
     pub fn forge_for_url(&self, url: &str) -> Option<&'static str> {
         self.hosts.provider_for_url(url)
+    }
+
+    /// The forge mapped to `host`, a host [`crate::remote::host_of`] gave.
+    pub fn forge_for_host(&self, host: &str) -> Option<&'static str> {
+        self.hosts.provider_for_host(host)
+    }
+
+    /// The current remote as of the last [`Self::refresh`], as `name (forge)`.
+    pub fn current_remote_label(&self) -> Option<String> {
+        let state = self.state();
+        let current = state.current.as_ref()?;
+        let mut label = current.name.clone();
+        if let Some(forge) = self.forge_for_url(&current.url) {
+            label.push_str(" (");
+            label.push_str(forge);
+            label.push(')');
+        }
+        Some(label)
     }
 }
 
@@ -101,9 +121,7 @@ impl Environment for SkipperEnvironment {
             return true;
         }
 
-        crate::git::status(&self.cwd)
-            .map(|s| s.staged.is_empty() && s.unstaged.is_empty() && s.untracked.is_empty())
-            .unwrap_or(true)
+        crate::git::is_clean(&self.cwd).unwrap_or(true)
     }
 
     fn git_has_staged(&self) -> bool {
@@ -111,7 +129,7 @@ impl Environment for SkipperEnvironment {
             return false;
         }
 
-        crate::git::status(&self.cwd).map(|s| !s.staged.is_empty()).unwrap_or(false)
+        crate::git::has_staged(&self.cwd).unwrap_or(false)
     }
 
     fn cwd(&self) -> &Path {
@@ -119,7 +137,7 @@ impl Environment for SkipperEnvironment {
     }
 
     fn forges(&self) -> BTreeSet<&'static str> {
-        self.state().forges
+        self.state().forges.clone()
     }
 }
 

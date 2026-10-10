@@ -15,6 +15,16 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+/// Whether `refs/heads/{name}` exists, as git itself sees it.
+fn has_branch(dir: &Path, name: &str) -> bool {
+    Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{name}")])
+        .current_dir(dir)
+        .status()
+        .expect("run git")
+        .success()
+}
+
 fn init_repo(dir: &Path) {
     git(dir, &["init", "-b", "main"]);
     git(dir, &["config", "user.name", "Test User"]);
@@ -31,19 +41,12 @@ fn create_does_not_checkout_and_delete_removes_merged_branch() {
 
     let created = create(temp.path(), "topic", None).expect("create branch");
     assert_eq!(created.operation, "create");
-    assert_eq!(
-        crate::git::branches(temp.path()).expect("branches").current.as_deref(),
-        Some("main")
-    );
-    assert!(
-        crate::git::branches(temp.path()).expect("branches").local.contains(&"topic".to_string())
-    );
+    assert_eq!(crate::git::current_branch(temp.path()).expect("head").as_deref(), Some("main"));
+    assert!(has_branch(temp.path(), "topic"));
 
     let deleted = delete(temp.path(), "topic", false).expect("delete merged branch");
     assert_eq!(deleted.oid, created.oid);
-    assert!(
-        !crate::git::branches(temp.path()).expect("branches").local.contains(&"topic".to_string())
-    );
+    assert!(!has_branch(temp.path(), "topic"));
 }
 
 #[test]

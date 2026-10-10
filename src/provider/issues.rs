@@ -7,7 +7,7 @@ pub(crate) const LIST_LIMIT: usize = 30;
 
 /// An issue as listed: enough to triage and pick one to read. Every field is
 /// always present, so an empty `labels` means none, not unsupported.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IssueSummary {
     pub number: u64,
     pub title: String,
@@ -20,7 +20,7 @@ pub struct IssueSummary {
 }
 
 /// An issue with its whole body and discussion, oldest comment first.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IssueThread {
     pub number: u64,
     pub title: String,
@@ -33,7 +33,7 @@ pub struct IssueThread {
     pub notes: Vec<IssueNote>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IssueNote {
     pub id: u64,
     pub author: String,

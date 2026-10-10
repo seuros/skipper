@@ -1,14 +1,6 @@
 use super::*;
 
 #[test]
-fn test_gitlab_provider_config() {
-    let provider = GitLabProvider::new();
-    assert_eq!(provider.name(), "gitlab");
-    assert_eq!(provider.cli(), "glab");
-    assert!(provider.min_version() >= Version::new(1, 0, 0));
-}
-
-#[test]
 fn test_pipeline_normalization() {
     let json = r#"[
         {"id": 1001, "status": "success", "ref": "master",

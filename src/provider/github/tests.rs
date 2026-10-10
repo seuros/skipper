@@ -24,7 +24,7 @@ fn test_workflow_run_normalization() {
     let runs: Vec<runs::WorkflowRun> = serde_json::from_str(json).unwrap();
     let runs: Vec<BuildRun> = runs.into_iter().map(Into::into).collect();
 
-    assert_eq!((runs[0].status.as_str(), runs[0].id.as_str()), ("success", "42"));
+    assert_eq!((runs[0].status, runs[0].id.as_str()), ("success", "42"));
     assert_eq!(runs[0].workflow.as_deref(), Some("CI"));
     assert!(runs[0].is_terminal());
     assert_eq!(runs[1].status, "running");
@@ -166,10 +166,10 @@ async fn test_retrying_retries_network_failures_only() {
     assert_eq!(calls.get(), 4);
 }
 
-fn check(name: &str, bucket: &str) -> PrCheck {
+fn check(name: &str, bucket: &'static str) -> PrCheck {
     PrCheck {
         name: name.to_string(),
-        bucket: bucket.to_string(),
+        bucket,
         workflow: "CI".to_string(),
         link: None,
         description: None,

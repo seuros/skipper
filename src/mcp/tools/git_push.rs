@@ -7,7 +7,7 @@ use serde::Serialize;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct GitPushParams {
-    /// Remotes to push to (default: the current remote); ["all"] for every remote
+    /// Remotes to push to (default: the current remote); `["all"]` for every remote
     #[serde(default)]
     remotes: Vec<String>,
     /// Branches to push (default: the checked-out branch)

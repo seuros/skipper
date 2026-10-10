@@ -10,10 +10,8 @@ use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::provider::Registry;
 use crate::remote::ForgeHosts;
 use crate::watcher::{GitStatusWatcher, RemoteWatcher, WatcherManager};
-
-const REMOTE_WATCHER: &str = "remotes";
 use mcp_host::prelude::*;
-use serde_json::json;
+use serde_json::{Map, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -41,18 +39,17 @@ impl Environment for McpEnvironment {
         self.env.cwd()
     }
 
+    /// Presence is the answer: every predicate asks `.is_some()`, and they
+    /// run per tool on every listing. An empty `String` does not allocate.
     fn get_custom(&self, key: &str) -> Option<String> {
-        if key == "writes" {
-            return self.writes.enabled.then(|| "enabled".to_string());
-        }
-        if let Some(name) = key.strip_prefix("forge:") {
-            return (self.registry.is_enabled(name) && self.env.forges().contains(name))
-                .then(|| "enabled".to_string());
-        }
-
-        key.strip_prefix("provider:")
-            .filter(|name| self.registry.is_enabled(name))
-            .map(|_| "enabled".to_string())
+        let enabled = if key == "writes" {
+            self.writes.enabled
+        } else if let Some(name) = key.strip_prefix("forge:") {
+            self.registry.is_enabled(name) && self.env.has_forge(name)
+        } else {
+            key.strip_prefix("provider:").is_some_and(|name| self.registry.is_enabled(name))
+        };
+        enabled.then(String::new)
     }
 }
 
@@ -62,18 +59,16 @@ impl Environment for McpEnvironment {
 struct RemoteHydrator(Arc<SkipperEnvironment>);
 
 impl CapabilityHydrator for RemoteHydrator {
-    fn hydrate<'a>(&'a self, _ctx: CapabilityHydrationContext) -> CapabilityHydrationFuture<'a> {
-        Box::pin(async move {
-            self.0.refresh().await;
-            Ok(())
-        })
+    fn hydrate(&self, _ctx: CapabilityHydrationContext) -> CapabilityHydrationFuture<'_> {
+        self.0.refresh();
+        Box::pin(std::future::ready(Ok(())))
     }
 }
 
 /// Forge tools fail fast while the forge is down: three upstream failures in a
 /// minute open a tool's breaker for 30s. Caller errors (bad ref, no PR for the
 /// branch) answer `InvalidArguments` and never count.
-fn breaker() -> ToolBreakerConfig {
+const fn breaker() -> ToolBreakerConfig {
     ToolBreakerConfig {
         failure_threshold: 3,
         failure_window_secs: 60.0,
@@ -97,7 +92,7 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     hosts.extend(&config.hosts);
 
     let cwd = std::env::current_dir()?;
-    let env = Arc::new(SkipperEnvironment::with_hosts(&cwd, hosts).await);
+    let env = Arc::new(SkipperEnvironment::with_hosts(&cwd, hosts));
     let has_repo = env.has_git_repo();
 
     tracing::info!(
@@ -166,28 +161,31 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
     }
 
     if has_repo {
-        manager.add(Arc::new(GitStatusWatcher::new(&cwd))).await;
+        manager.add(Arc::new(GitStatusWatcher::new(&cwd)));
     }
 
-    manager.add(Arc::new(RemoteWatcher::new(env))).await;
+    manager.add(Arc::new(RemoteWatcher::new(env)));
 
     tokio::spawn(async move {
         while let Some(n) = rx.recv().await {
-            if n.watcher == REMOTE_WATCHER
+            if n.watcher == RemoteWatcher::NAME
                 && let Err(e) =
                     sender.send(JsonRpcNotification::new("notifications/tools/list_changed", None))
             {
                 tracing::warn!(error = %e, "dropped tools/list_changed notification");
             }
 
+            // Moved, not `json!`: that macro serializes through a reference
+            // and would deep-copy `data`.
+            let params = Map::from_iter([
+                ("level".to_owned(), Value::from("info")),
+                ("logger".to_owned(), Value::from(n.watcher)),
+                ("data".to_owned(), n.data),
+                ("message".to_owned(), Value::String(n.message)),
+            ]);
             if let Err(e) = sender.send(JsonRpcNotification::new(
                 "notifications/message",
-                Some(json!({
-                    "level": "info",
-                    "logger": n.watcher,
-                    "data": n.data,
-                    "message": n.message,
-                })),
+                Some(Value::Object(params)),
             )) {
                 tracing::warn!(watcher = n.watcher, error = %e, "dropped watcher notification");
             }
@@ -200,6 +198,6 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (server, manager) = build_server().await?;
     let result = server.run(StdioTransport::new()).await;
-    manager.stop().await;
+    manager.stop();
     result
 }

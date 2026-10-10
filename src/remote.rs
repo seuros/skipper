@@ -116,31 +116,43 @@ impl ForgeHosts {
         }
     }
 
+    /// Keys are lowercase; a host from [`host_of`] already is, so it is
+    /// looked up as given and lowercased only when that misses.
     pub fn provider_for_host(&self, host: &str) -> Option<&'static str> {
-        self.hosts.get(&host.to_lowercase()).copied()
+        self.hosts
+            .get(host)
+            .or_else(|| {
+                host.chars()
+                    .any(char::is_uppercase)
+                    .then(|| self.hosts.get(&host.to_lowercase()))?
+            })
+            .copied()
     }
 
     pub fn provider_for_url(&self, url: &str) -> Option<&'static str> {
         self.provider_for_host(&host_of(url)?)
     }
 
-    pub fn providers_for_urls<I, S>(&self, urls: I) -> BTreeSet<&'static str>
+    /// The forges `urls` are on, and the hosts no forge is mapped to, in one
+    /// pass over the URLs.
+    pub fn classify<I, S>(&self, urls: I) -> (BTreeSet<&'static str>, BTreeSet<String>)
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        urls.into_iter().filter_map(|url| self.provider_for_url(url.as_ref())).collect()
-    }
-
-    pub fn unknown_hosts<I, S>(&self, urls: I) -> BTreeSet<String>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        urls.into_iter()
-            .filter_map(|url| host_of(url.as_ref()))
-            .filter(|host| self.provider_for_host(host).is_none())
-            .collect()
+        let mut forges = BTreeSet::new();
+        let mut unknown = BTreeSet::new();
+        for host in urls.into_iter().filter_map(|url| host_of(url.as_ref())) {
+            match self.provider_for_host(&host) {
+                Some(forge) => {
+                    forges.insert(forge);
+                }
+                None => {
+                    unknown.insert(host);
+                }
+            }
+        }
+        (forges, unknown)
     }
 }
 

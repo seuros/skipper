@@ -42,15 +42,15 @@ pub enum ProviderStatus {
 }
 
 impl ProviderStatus {
-    pub fn is_available(&self) -> bool {
+    pub const fn is_available(&self) -> bool {
         matches!(self, Self::Available { .. })
     }
 
-    pub fn is_unreachable(&self) -> bool {
+    pub const fn is_unreachable(&self) -> bool {
         matches!(self, Self::Unreachable)
     }
 
-    pub fn version(&self) -> Option<&Version> {
+    pub const fn version(&self) -> Option<&Version> {
         match self {
             Self::Available { version } => Some(version),
             _ => None,
@@ -58,10 +58,11 @@ impl ProviderStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct BuildRun {
     pub id: String,
-    pub status: String,
+    /// success | failure | cancelled | skipped | completed | running | queued | unknown
+    pub status: &'static str,
     pub branch: Option<String>,
     pub workflow: Option<String>,
     pub title: Option<String>,
@@ -70,7 +71,7 @@ pub struct BuildRun {
 
 impl BuildRun {
     pub fn is_terminal(&self) -> bool {
-        is_terminal_status(&self.status)
+        is_terminal_status(self.status)
     }
 }
 
@@ -115,8 +116,30 @@ const NETWORK_FAILURES: &[&str] = &[
 
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]
 fn network_failure(output: &str) -> bool {
-    let output = output.to_lowercase();
-    NETWORK_FAILURES.iter().any(|marker| output.contains(marker))
+    NETWORK_FAILURES.iter().any(|marker| crate::ascii::contains_ignore_case(output, marker))
+}
+
+/// A forge HTTP request that got no response.
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) fn http_error(api: &str, e: impl std::fmt::Display) -> CliError {
+    CliError::io(api, std::io::Error::other(e.to_string()))
+}
+
+/// The one HTTP client of the process: its connection pool and TLS config
+/// are built once, so forge calls reuse connections instead of handshaking
+/// per request.
+#[cfg(any(feature = "github", feature = "tea"))]
+pub(crate) fn http_client() -> &'static rama::http::client::DefaultHttpWebClient {
+    static CLIENT: std::sync::LazyLock<rama::http::client::DefaultHttpWebClient> =
+        std::sync::LazyLock::new(Default::default);
+    &CLIENT
+}
+
+/// `skip_serializing_if` for counters.
+#[cfg(any(feature = "github", feature = "tea"))]
+#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde passes the field by reference")]
+pub(crate) const fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 #[cfg(any(feature = "github", feature = "gitlab"))]
@@ -125,7 +148,7 @@ async fn cli_authenticated(cli: &str) -> Result<bool> {
     if output.success() {
         return Ok(true);
     }
-    if network_failure(&format!("{}\n{}", output.stdout, output.stderr)) {
+    if network_failure(&output.stdout) || network_failure(&output.stderr) {
         return Err(CliError::execution_failed(cli, output.code, output.stderr));
     }
     Ok(false)
@@ -186,9 +209,8 @@ pub trait Provider: Send + Sync {
                 Err(_) => return ProviderStatus::NotInstalled,
             };
 
-            let version = match version::parse_version(&version_output, self.cli()) {
-                Ok(v) => v,
-                Err(_) => return ProviderStatus::NotInstalled,
+            let Ok(version) = version::parse_version(&version_output, self.cli()) else {
+                return ProviderStatus::NotInstalled;
             };
 
             if version < self.min_version() {
@@ -378,7 +400,7 @@ impl Registry {
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn Provider> {
-        self.providers.get(name).map(|p| p.as_ref())
+        self.providers.get(name).map(std::convert::AsRef::as_ref)
     }
 
     pub fn get_arc(&self, name: &str) -> Option<Arc<dyn Provider>> {

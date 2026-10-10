@@ -2,12 +2,13 @@
 //! them, and at most one blocking `pr_watch` call waiting on their events.
 //!
 //! Polling is adaptive per PR (fast while something moves or checks run,
-//! backing off while quiet), requests are conditional on ETags, and a
+//! backing off while quiet), requests are conditional on `ETags`, and a
 //! process-wide token bucket caps the request rate on top.
 
 pub mod github;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -24,8 +25,8 @@ use crate::error::{CliError, Result};
 use crate::provider::github::{CheckCounts, GitHubProvider};
 use github::{GithubPr, Polled, PrRef};
 
-/// Stop watching after this long without a pr_watch call or resource read.
-const IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+/// Stop watching after this long without a `pr_watch` call or resource read.
+const IDLE_TTL: Duration = Duration::from_mins(30);
 /// Never poll one PR more often than this, however often the model asks.
 const MIN_GAP: Duration = Duration::from_secs(5);
 /// Recent events kept per PR, and finished PRs kept, for the resource.
@@ -46,8 +47,34 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub fn all() -> BTreeSet<Self> {
-        BTreeSet::from([Self::Comment, Self::Review, Self::Checks, Self::Push])
+    const ALL: [Self; 4] = [Self::Comment, Self::Review, Self::Checks, Self::Push];
+
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// A set of [`EventKind`]s, as bits: `Copy`, and no allocation per watch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventKinds(u8);
+
+impl EventKinds {
+    pub const ALL: Self = Self(0b1111);
+
+    pub const fn contains(self, kind: EventKind) -> bool {
+        self.0 & kind.bit() != 0
+    }
+}
+
+impl FromIterator<EventKind> for EventKinds {
+    fn from_iter<I: IntoIterator<Item = EventKind>>(kinds: I) -> Self {
+        Self(kinds.into_iter().fold(0, |bits, kind| bits | kind.bit()))
+    }
+}
+
+impl Serialize for EventKinds {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.collect_seq(EventKind::ALL.into_iter().filter(|kind| self.contains(*kind)))
     }
 }
 
@@ -78,7 +105,7 @@ pub enum Event {
     },
     Review {
         author: String,
-        /// APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED
+        /// APPROVED | `CHANGES_REQUESTED` | COMMENTED | DISMISSED
         state: String,
         body: String,
         url: String,
@@ -94,7 +121,7 @@ pub enum Event {
 impl Event {
     /// Merged, closed, and errors end the PR's watch, so they are always
     /// delivered; the rest only when the PR's `until` asks for them.
-    fn wanted(&self, until: &BTreeSet<EventKind>) -> bool {
+    const fn wanted(&self, until: EventKinds) -> bool {
         let kind = match self {
             Self::Merged { .. } | Self::Closed { .. } | Self::Error { .. } => return true,
             Self::Comment { .. } => EventKind::Comment,
@@ -102,10 +129,10 @@ impl Event {
             Self::Checks(_) => EventKind::Checks,
             Self::Push { .. } => EventKind::Push,
         };
-        until.contains(&kind)
+        until.contains(kind)
     }
 
-    fn ends_watch(&self) -> bool {
+    const fn ends_watch(&self) -> bool {
         matches!(self, Self::Merged { .. } | Self::Closed { .. } | Self::Error { .. })
     }
 }
@@ -113,8 +140,8 @@ impl Event {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ChecksSummary {
     pub sha: String,
-    /// success | failure | cancelled | pending | no_checks
-    pub conclusion: String,
+    /// success | failure | cancelled | pending | `no_checks`
+    pub conclusion: &'static str,
     pub counts: CheckCounts,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<FailedCheck>,
@@ -132,16 +159,17 @@ pub struct PrSnapshot {
     pub pr: u64,
     pub url: String,
     /// open | closed | merged
-    pub state: String,
+    pub state: &'static str,
     pub head_sha: String,
     pub checks: Option<ChecksSummary>,
 }
 
+/// An event on PR `pr`. The event is shared with the PR's `recent` list.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PrEvent {
     pub pr: u64,
     #[serde(flatten)]
-    pub event: Event,
+    pub event: Arc<Event>,
 }
 
 /// Rate headers from the latest response.
@@ -188,42 +216,50 @@ impl ApiBudget {
     }
 }
 
-/// Everything the resource shows.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct WatchView {
-    /// A pr_watch call is blocking on these PRs now.
-    pub blocking: bool,
-    pub watching: Vec<WatchedView>,
-    /// Events waiting for the next blocking pr_watch call.
-    pub undelivered: Vec<PrEvent>,
+/// Everything the resource shows, borrowed from the watch state and
+/// serialized while it is locked.
+#[derive(Serialize)]
+struct WatchView<'a> {
+    /// A `pr_watch` call is blocking on these PRs now.
+    blocking: bool,
+    watching: Vec<WatchedView<'a>>,
+    /// Events waiting for the next blocking `pr_watch` call.
+    undelivered: &'a VecDeque<PrEvent>,
     /// Recently finished watches.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ended: Vec<PrSnapshot>,
+    #[serde(skip_serializing_if = "VecDeque::is_empty")]
+    ended: &'a VecDeque<Arc<PrSnapshot>>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct WatchedView {
-    pub pr: u64,
+#[derive(Serialize)]
+struct WatchedView<'a> {
+    pr: u64,
     /// owner/name the PR is on.
-    pub repo: String,
-    pub until: Vec<EventKind>,
+    repo: &'a str,
+    until: EventKinds,
     /// Null until the first poll lands.
-    pub status: Option<PrSnapshot>,
+    status: Option<&'a PrSnapshot>,
     /// Latest events, including ones `until` does not wake on.
-    pub recent: Vec<Event>,
+    recent: &'a VecDeque<Arc<Event>>,
     /// Last poll failure; polling continues with backoff.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    pub next_poll_secs: u64,
+    error: Option<&'a str>,
+    next_poll_secs: u64,
+}
+
+/// What a discussion read over every watched PR needs: the state of each
+/// finished one, and the repo of each still watched.
+pub struct DiscussionTargets {
+    pub ended: Vec<(u64, &'static str)>,
+    pub watching: Vec<(u64, String)>,
 }
 
 struct Watched {
     repo: String,
     /// Taken by the poller while a poll is in flight.
     source: Option<GithubPr>,
-    until: BTreeSet<EventKind>,
-    status: Option<PrSnapshot>,
-    recent: VecDeque<Event>,
+    until: EventKinds,
+    status: Option<Arc<PrSnapshot>>,
+    recent: VecDeque<Arc<Event>>,
     error: Option<String>,
     quiet: u8,
     last_poll: Option<Instant>,
@@ -234,7 +270,7 @@ struct Watched {
 struct State {
     prs: BTreeMap<u64, Watched>,
     inbox: VecDeque<PrEvent>,
-    ended: VecDeque<PrSnapshot>,
+    ended: VecDeque<Arc<PrSnapshot>>,
     running: bool,
     last_touch: Option<Instant>,
 }
@@ -273,25 +309,25 @@ impl PrWatcher {
         self: &Arc<Self>,
         pr: Option<u64>,
         repo: Option<&str>,
-        until: BTreeSet<EventKind>,
+        until: EventKinds,
     ) -> Result<(u64, bool)> {
         let (repo, number) = match pr {
             Some(number) => self.gh.locate_pr(&self.env, repo, Some(number)).await?,
             None => self.branch_pr(repo).await?,
         };
-        let full_name = repo.full_name();
-        let pr = PrRef { host: repo.host, owner: repo.owner, repo: repo.name, number };
 
         let (added, spawn) = {
             let mut state = self.lock();
             state.last_touch = Some(Instant::now());
-            let added = match state.prs.get_mut(&number) {
-                Some(watched) => {
-                    watched.until = until;
+            let added = match state.prs.entry(number) {
+                Entry::Occupied(mut watched) => {
+                    watched.get_mut().until = until;
                     false
                 }
-                None => {
-                    state.prs.insert(number, Watched::new(full_name, GithubPr::new(pr), until));
+                Entry::Vacant(slot) => {
+                    let full_name = repo.full_name().to_string();
+                    let pr = PrRef { host: repo.host, owner: repo.owner, repo: repo.name, number };
+                    slot.insert(Watched::new(full_name, GithubPr::new(pr), until));
                     true
                 }
             };
@@ -321,33 +357,44 @@ impl PrWatcher {
         Some(Blocker { watcher: Arc::clone(self) })
     }
 
-    /// State for the resource. Reading counts as interest in the watch.
-    pub fn view(&self) -> WatchView {
+    /// State for the resource, as JSON. Reading counts as interest in the watch.
+    pub fn view_json(&self) -> serde_json::Result<String> {
         let mut state = self.lock();
-        state.last_touch = Some(Instant::now());
         let now = Instant::now();
-        WatchView {
+        state.last_touch = Some(now);
+        let view = WatchView {
             blocking: self.blocking.load(Ordering::SeqCst),
             watching: state
                 .prs
                 .iter()
                 .map(|(pr, w)| WatchedView {
                     pr: *pr,
-                    repo: w.repo.clone(),
-                    until: w.until.iter().copied().collect(),
-                    status: w.status.clone(),
-                    recent: w.recent.iter().cloned().collect(),
-                    error: w.error.clone(),
+                    repo: &w.repo,
+                    until: w.until,
+                    status: w.status.as_deref(),
+                    recent: &w.recent,
+                    error: w.error.as_deref(),
                     next_poll_secs: w.next_poll.saturating_duration_since(now).as_secs(),
                 })
                 .collect(),
-            undelivered: state.inbox.iter().cloned().collect(),
-            ended: state.ended.iter().cloned().collect(),
+            undelivered: &state.inbox,
+            ended: &state.ended,
+        };
+        serde_json::to_string(&view)
+    }
+
+    /// The PRs a discussion read covers. Reading counts as interest.
+    pub fn discussion_targets(&self) -> DiscussionTargets {
+        let mut state = self.lock();
+        state.last_touch = Some(Instant::now());
+        DiscussionTargets {
+            ended: state.ended.iter().map(|s| (s.pr, s.state)).collect(),
+            watching: state.prs.iter().map(|(pr, w)| (*pr, w.repo.clone())).collect(),
         }
     }
 
     /// Latest known status of every watched PR.
-    pub fn statuses(&self) -> Vec<PrSnapshot> {
+    pub fn statuses(&self) -> Vec<Arc<PrSnapshot>> {
         self.lock().prs.values().filter_map(|w| w.status.clone()).collect()
     }
 
@@ -402,8 +449,9 @@ impl PrWatcher {
                 watched.status = Some(polled.snapshot);
                 for event in polled.events {
                     ended |= event.ends_watch();
-                    if event.wanted(&watched.until) {
-                        delivered.push(PrEvent { pr: number, event: event.clone() });
+                    let event = Arc::new(event);
+                    if event.wanted(watched.until) {
+                        delivered.push(PrEvent { pr: number, event: Arc::clone(&event) });
                     }
                     watched.recent.push_back(event);
                     if watched.recent.len() > RECENT {
@@ -416,8 +464,8 @@ impl PrWatcher {
             Err(e) if fatal(&e, &source.rate) => {
                 tracing::warn!(pr = number, error = %e, "pr watch ended");
                 ended = true;
-                delivered
-                    .push(PrEvent { pr: number, event: Event::Error { message: e.to_string() } });
+                let event = Arc::new(Event::Error { message: e.to_string() });
+                delivered.push(PrEvent { pr: number, event });
             }
             Err(e) => {
                 tracing::debug!(pr = number, error = %e, "pr poll failed; backing off");
@@ -446,9 +494,9 @@ impl PrWatcher {
 
     /// The repo and number of the checked-out branch's PR in `repo`.
     async fn branch_pr(&self, repo: Option<&str>) -> Result<(crate::workspace::ForgeRepo, u64)> {
-        let branch = crate::git::repo_info(self.env.cwd())
+        let branch = crate::git::current_branch(self.env.cwd())
             .ok()
-            .and_then(|info| info.branch)
+            .flatten()
             .ok_or_else(|| CliError::no_target("detached HEAD; pass `pr`"))?;
         let key = format!("{}:{branch}", repo.unwrap_or_default());
         if let Some(found) = self.branch_prs.lock().expect("branch cache lock").get(&key) {
@@ -466,7 +514,7 @@ impl PrWatcher {
 }
 
 impl Watched {
-    fn new(repo: String, source: GithubPr, until: BTreeSet<EventKind>) -> Self {
+    fn new(repo: String, source: GithubPr, until: EventKinds) -> Self {
         Self {
             repo,
             source: Some(source),
@@ -552,18 +600,19 @@ fn next_delay(quiet: u8, blocking: bool, checks_pending: bool, rate: &RateHint) 
             .map_or(0, |d| d.as_secs());
         ms = ms.max(reset.saturating_sub(now) * 1000 / (left + 1));
     }
-    Duration::from_millis(ms.max(MIN_GAP.as_millis() as u64))
+    Duration::from_millis(ms).max(MIN_GAP)
 }
 
 /// Errors that retrying will not fix: the PR is gone or out of reach, or the
 /// API answered something we cannot read. Rate limiting is not one of them.
 fn fatal(error: &CliError, rate: &RateHint) -> bool {
     match error {
-        CliError::ExecutionFailed { code: 401 | 404 | 410 | 422, .. } => true,
+        CliError::ExecutionFailed { code: 401 | 404 | 410 | 422, .. } | CliError::Json { .. } => {
+            true
+        }
         CliError::ExecutionFailed { code: 403, .. } => {
             rate.remaining != Some(0) && rate.retry_after.is_none()
         }
-        CliError::Json { .. } => true,
         _ => false,
     }
 }

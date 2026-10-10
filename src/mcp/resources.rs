@@ -1,7 +1,5 @@
 use super::tools::SkipperServer;
 use mcp_host::prelude::*;
-#[cfg(any(feature = "github", feature = "tea"))]
-use serde_json::Value;
 
 impl SkipperServer {
     #[mcp_resource(
@@ -32,8 +30,15 @@ impl SkipperServer {
         mime_type = "application/json",
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
     )]
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "resource handlers are async; this one reads memory"
+    )]
     pub(crate) async fn watch(&self, _ctx: Ctx<'_>) -> ResourceResult {
-        json_resource("skipper://watch", &self.pr_watcher.view())
+        let json =
+            self.pr_watcher.view_json().map_err(|e| ResourceError::Internal(e.to_string()))?;
+        Ok(vec![text_resource_with_mime("skipper://watch", json, "application/json")])
     }
 
     #[cfg(feature = "tea")]
@@ -45,18 +50,24 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:tea\").is_some()).unwrap_or(false)"
     )]
     pub(crate) async fn repo(&self, _ctx: Ctx<'_>) -> ResourceResult {
-        use crate::provider::forgejo::{ForgejoClient, credentials_for_host};
+        #[derive(serde::Serialize)]
+        struct WithRemote<T> {
+            remote: String,
+            #[serde(flatten)]
+            repo: T,
+        }
 
-        let current = crate::git::current_remote(&self.cwd).ok().flatten().map(|c| c.name);
-        let remotes = crate::remote::ordered_remotes(
-            crate::git::remotes(&self.cwd).map_err(|e| ResourceError::Read(e.to_string()))?.remotes,
-            current.as_deref(),
-        );
+        use crate::provider::forgejo::{ForgejoClient, load_credentials, match_host};
 
-        let resolved = remotes.iter().find_map(|(remote, url)| {
-            let host = crate::remote::host_of(url)?;
-            let creds = credentials_for_host(&host)?;
-            let (owner, name) = crate::remote::repo_path_of(url)?;
+        let (info, current) = crate::git::remotes_with_current(&self.cwd)
+            .map_err(|e| ResourceError::Read(e.to_string()))?;
+        let remotes =
+            crate::remote::ordered_remotes(info.remotes, current.as_ref().map(|c| c.name.as_str()));
+
+        let logins = load_credentials();
+        let resolved = remotes.into_iter().find_map(|(remote, url)| {
+            let (owner, name) = crate::remote::repo_path_of(&url)?;
+            let creds = match_host(&logins, &crate::remote::host_of(&url)?)?.clone();
             Some((remote, creds, owner, name))
         });
 
@@ -67,14 +78,7 @@ impl SkipperServer {
         };
 
         let repo = ForgejoClient::new(creds).repo(&owner, &name).await.map_err(forge_error)?;
-
-        let mut payload =
-            serde_json::to_value(&repo).map_err(|e| ResourceError::Internal(e.to_string()))?;
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("remote".to_string(), Value::String(remote.clone()));
-        }
-
-        json_resource("skipper://repo", &payload)
+        json_resource("skipper://repo", &WithRemote { remote, repo })
     }
 
     #[cfg(feature = "github")]
@@ -91,8 +95,8 @@ impl SkipperServer {
         let (gh, repo, pr) = pr_target(&self.env, spec, pr).await?;
         let overview = gh.pr_overview(&repo, pr).await.map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}"), spec),
-            &Source::repo(&repo, overview),
+            with_repo(format_args!("skipper://pr/{number}"), spec),
+            &Source::repo(repo, overview),
         )
     }
 
@@ -105,7 +109,17 @@ impl SkipperServer {
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_checks(&self, ctx: Ctx<'_>) -> ResourceResult {
-        use crate::provider::github::CheckCounts;
+        #[derive(serde::Serialize)]
+        struct Matrix {
+            pr: u64,
+            conclusion: &'static str,
+            counts: CheckCounts,
+            workflows: BTreeMap<Cow<'static, str>, Vec<PrCheck>>,
+        }
+
+        use crate::provider::github::{CheckCounts, PrCheck};
+        use std::borrow::Cow;
+        use std::collections::BTreeMap;
 
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
@@ -113,35 +127,23 @@ impl SkipperServer {
         let checks = gh.pr_checks(&repo, pr).await.map_err(forge_error)?;
 
         let counts = CheckCounts::tally(&checks);
-        let mut workflows = serde_json::Map::new();
+        let mut workflows: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for mut check in checks {
-            if !matches!(check.bucket.as_str(), "fail" | "cancel") {
+            if !matches!(check.bucket, "fail" | "cancel") {
                 check.link = None;
                 check.description = None;
             }
             let key = match std::mem::take(&mut check.workflow) {
-                workflow if workflow.is_empty() => "(statuses)".to_string(),
-                workflow => workflow,
+                workflow if workflow.is_empty() => Cow::Borrowed("(statuses)"),
+                workflow => Cow::Owned(workflow),
             };
-            let check =
-                serde_json::to_value(check).map_err(|e| ResourceError::Internal(e.to_string()))?;
-            workflows
-                .entry(key)
-                .or_insert_with(|| Value::Array(Vec::new()))
-                .as_array_mut()
-                .expect("workflow entries are arrays")
-                .push(check);
+            workflows.entry(key).or_default().push(check);
         }
 
-        let matrix = serde_json::json!({
-            "pr": pr,
-            "conclusion": counts.conclusion(),
-            "counts": counts,
-            "workflows": workflows,
-        });
+        let matrix = Matrix { pr, conclusion: counts.conclusion(), counts, workflows };
         json_resource(
-            with_repo(format!("skipper://pr/{number}/checks"), spec),
-            &Source::repo(&repo, matrix),
+            with_repo(format_args!("skipper://pr/{number}/checks"), spec),
+            &Source::repo(repo, matrix),
         )
     }
 
@@ -154,13 +156,19 @@ impl SkipperServer {
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_files(&self, ctx: Ctx<'_>) -> ResourceResult {
+        #[derive(serde::Serialize)]
+        struct Files {
+            pr: u64,
+            files: Vec<crate::provider::github::PrFile>,
+        }
+
         let (number, pr) = pr_param(&ctx)?;
         let spec = ctx.get_uri_param("repo");
         let (gh, repo, pr) = pr_target(&self.env, spec, pr).await?;
         let files = gh.pr_files(&repo, pr).await.map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/files"), spec),
-            &Source::repo(&repo, serde_json::json!({ "pr": pr, "files": files })),
+            with_repo(format_args!("skipper://pr/{number}/files"), spec),
+            &Source::repo(repo, Files { pr, files }),
         )
     }
 
@@ -177,8 +185,8 @@ impl SkipperServer {
         let spec = ctx.get_uri_param("repo");
         let (repo, discussion) = discussion(&self.env, spec, pr, "all").await?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/comments"), spec),
-            &Source::repo(&repo, discussion),
+            with_repo(format_args!("skipper://pr/{number}/comments"), spec),
+            &Source::repo(repo, discussion),
         )
     }
 
@@ -196,8 +204,8 @@ impl SkipperServer {
         let spec = ctx.get_uri_param("repo");
         let (repo, discussion) = discussion(&self.env, spec, pr, kind).await?;
         json_resource(
-            with_repo(format!("skipper://pr/{number}/comments/{kind}"), spec),
-            &Source::repo(&repo, discussion),
+            with_repo(format_args!("skipper://pr/{number}/comments/{kind}"), spec),
+            &Source::repo(repo, discussion),
         )
     }
 
@@ -211,33 +219,41 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.get_custom(\"forge:github\").is_some()).unwrap_or(false)"
     )]
     pub(crate) async fn watch_comments(&self, ctx: Ctx<'_>) -> ResourceResult {
+        /// One PR's entry: how a finished watch ended, its discussion, or why
+        /// that could not be read.
+        #[derive(serde::Serialize)]
+        #[serde(untagged)]
+        enum Entry {
+            Ended { pr: u64, state: &'static str },
+            Read(Source<crate::provider::github::PrDiscussion>),
+            Failed { pr: u64, error: String },
+        }
+
         let kind = note_kind(&ctx)?;
-        let view = self.pr_watcher.view();
-        let mut found: Vec<(u64, Value)> = view
-            .ended
-            .iter()
-            .map(|s| (s.pr, serde_json::json!({ "pr": s.pr, "state": s.state })))
-            .collect();
+        let targets = self.pr_watcher.discussion_targets();
+        let mut found: Vec<(u64, Entry)> =
+            targets.ended.iter().map(|&(pr, state)| (pr, Entry::Ended { pr, state })).collect();
 
         let mut tasks = tokio::task::JoinSet::new();
-        for watched in view.watching.iter().filter(|w| !found.iter().any(|(e, _)| *e == w.pr)) {
-            let (pr, repo) = (watched.pr, watched.repo.clone());
+        for (pr, repo) in targets.watching {
+            if targets.ended.iter().any(|(ended, _)| *ended == pr) {
+                continue;
+            }
             let env = self.env.clone();
             tasks.spawn(async move { (pr, discussion(&env, Some(&repo), Some(pr), kind).await) });
         }
         while let Some(joined) = tasks.join_next().await {
             let (pr, result) = joined.map_err(|e| ResourceError::Internal(e.to_string()))?;
-            let value = match result {
-                Ok((repo, d)) => serde_json::to_value(Source::repo(&repo, d))
-                    .map_err(|e| ResourceError::Internal(e.to_string()))?,
-                Err(e) => serde_json::json!({ "pr": pr, "error": e.to_string() }),
+            let entry = match result {
+                Ok((repo, d)) => Entry::Read(Source::repo(repo, d)),
+                Err(e) => Entry::Failed { pr, error: e.to_string() },
             };
-            found.push((pr, value));
+            found.push((pr, entry));
         }
         found.sort_by_key(|(pr, _)| *pr);
         found.dedup_by_key(|(pr, _)| *pr);
-        let values: Vec<Value> = found.into_iter().map(|(_, v)| v).collect();
-        json_resource(format!("skipper://watch/comments/{kind}"), &values)
+        let entries: Vec<Entry> = found.into_iter().map(|(_, entry)| entry).collect();
+        json_resource(format!("skipper://watch/comments/{kind}"), &entries)
     }
 
     #[cfg(feature = "github")]
@@ -249,6 +265,11 @@ impl SkipperServer {
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_list(&self, ctx: Ctx<'_>) -> ResourceResult {
+        #[derive(serde::Serialize)]
+        struct Prs {
+            prs: Vec<crate::provider::github::PrState>,
+        }
+
         let state = uri_choice(&ctx, "state", "open", &["open", "closed", "merged", "all"])?;
         let author = ctx.get_uri_param("author").unwrap_or("me");
         let spec = ctx.get_uri_param("repo");
@@ -258,8 +279,8 @@ impl SkipperServer {
             .await
             .map_err(forge_error)?;
         json_resource(
-            with_repo(format!("skipper://prs/{state}/{author}"), spec),
-            &Source::repo(&repo, serde_json::json!({ "prs": prs })),
+            with_repo(format_args!("skipper://prs/{state}/{author}"), spec),
+            &Source::repo(repo, Prs { prs }),
         )
     }
 
@@ -273,6 +294,11 @@ impl SkipperServer {
         visible = "ctx.environment.map(|e| e.has_git_repo() && (e.get_custom(\"forge:github\").is_some() || e.get_custom(\"forge:tea\").is_some())).unwrap_or(false)"
     )]
     pub(crate) async fn issues(&self, ctx: Ctx<'_>) -> ResourceResult {
+        #[derive(serde::Serialize)]
+        struct Issues {
+            issues: Vec<crate::provider::issues::IssueSummary>,
+        }
+
         let state = uri_choice(&ctx, "state", "open", &["open", "closed", "all"])?;
         let spec = ctx.get_uri_param("repo");
         let target = issue_repo(&self.env, spec)?;
@@ -290,8 +316,8 @@ impl SkipperServer {
         .map_err(forge_error)?;
 
         json_resource(
-            with_repo(format!("skipper://issues/{state}"), spec),
-            &Source::forge(&target, serde_json::json!({ "issues": issues })),
+            with_repo(format_args!("skipper://issues/{state}"), spec),
+            &Source::forge(target, Issues { issues }),
         )
     }
 
@@ -333,8 +359,8 @@ impl SkipperServer {
             return Err(refused(format!("#{number} is a pull request{hint}")));
         };
         json_resource(
-            with_repo(format!("skipper://issue/{number}"), spec),
-            &Source::forge(&target, thread),
+            with_repo(format_args!("skipper://issue/{number}"), spec),
+            &Source::forge(target, thread),
         )
     }
 }
@@ -346,31 +372,42 @@ impl SkipperServer {
 struct Source<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     forge: Option<&'static str>,
-    repo: String,
+    /// `owner/name`
+    #[serde(serialize_with = "full_name")]
+    repo: crate::workspace::ForgeRepo,
     #[serde(flatten)]
     data: T,
+}
+
+/// Writes `owner/name` straight into the output.
+#[cfg(any(feature = "github", feature = "tea"))]
+fn full_name<S: serde::Serializer>(
+    repo: &crate::workspace::ForgeRepo,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    s.collect_str(&repo.full_name())
 }
 
 #[cfg(any(feature = "github", feature = "tea"))]
 impl<T> Source<T> {
     /// A read on one forge (GitHub PRs): the repo alone.
     #[cfg(feature = "github")]
-    fn repo(target: &crate::workspace::ForgeRepo, data: T) -> Self {
-        Self { forge: None, repo: target.full_name(), data }
+    const fn repo(target: crate::workspace::ForgeRepo, data: T) -> Self {
+        Self { forge: None, repo: target, data }
     }
 
     /// A read any forge may answer (issues): the forge too.
-    fn forge(target: &crate::workspace::ForgeRepo, data: T) -> Self {
-        Self { forge: Some(target.forge), repo: target.full_name(), data }
+    const fn forge(target: crate::workspace::ForgeRepo, data: T) -> Self {
+        Self { forge: Some(target.forge), repo: target, data }
     }
 }
 
-/// `uri` with the `repo` it was read with.
+/// `uri` with the `repo` it was read with, formatted once.
 #[cfg(any(feature = "github", feature = "tea"))]
-fn with_repo(uri: String, spec: Option<&str>) -> String {
+fn with_repo(uri: std::fmt::Arguments<'_>, spec: Option<&str>) -> String {
     match spec {
-        Some(spec) => format!("{uri}?repo={}", urlencoding::encode(spec)),
-        None => uri,
+        Some(spec) => format!("{uri}?repo={}", urlencoding::Encoded(spec)),
+        None => uri.to_string(),
     }
 }
 
@@ -458,6 +495,10 @@ fn github_repo(
 /// retries, so they answer `RetryExhausted`, which mcp-host does not retry
 /// again; anything else (no such PR, no login, a 404) is refused at once.
 #[cfg(any(feature = "github", feature = "tea"))]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "a `map_err` adapter takes the error it replaces"
+)]
 fn forge_error(e: crate::error::CliError) -> ResourceError {
     if crate::provider::retryable(&e) {
         return ResourceError::RetryExhausted {

@@ -37,13 +37,14 @@ fn test_summarize_checks() {
         description: None,
     };
 
-    let done = summarize("a", &[run("completed", Some("success"))], &[status("success")]);
-    assert_eq!((done.conclusion.as_str(), done.counts.pass), ("success", 2));
+    let done = summarize("a".into(), &[run("completed", Some("success"))], &[status("success")]);
+    assert_eq!((done.conclusion, done.counts.pass), ("success", 2));
 
-    let running = summarize("a", &[run("in_progress", None)], &[]);
+    let running = summarize("a".into(), &[run("in_progress", None)], &[]);
     assert_eq!(running.conclusion, "pending");
 
     // A failure settles the conclusion while other checks still run.
-    let failing = summarize("a", &[run("completed", Some("timed_out")), run("queued", None)], &[]);
-    assert_eq!((failing.conclusion.as_str(), failing.failed.len()), ("failure", 1));
+    let failing =
+        summarize("a".into(), &[run("completed", Some("timed_out")), run("queued", None)], &[]);
+    assert_eq!((failing.conclusion, failing.failed.len()), ("failure", 1));
 }

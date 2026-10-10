@@ -1,14 +1,17 @@
-//! A watched GitHub PR, read over REST. Requests carry the last ETag, so an
+//! A watched GitHub PR, read over REST. Requests carry the last `ETag`, so an
 //! unchanged PR answers 304 and costs no rate limit.
 
 use std::collections::HashSet;
+use std::fmt::Display;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
 use super::{ApiBudget, ChecksSummary, Event, FailedCheck, PrSnapshot, RateHint};
 use crate::error::{CliError, Result};
 use crate::provider::github::{
-    ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login, run_bucket, status_bucket,
+    ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login, rest_url, run_bucket,
+    status_bucket,
 };
 use crate::provider::text::{EVENT_BODY_LIMIT, clip, readable_by};
 
@@ -24,12 +27,13 @@ pub struct PrRef {
 }
 
 impl PrRef {
-    fn path(&self, tail: &str) -> String {
-        format!("repos/{}/{}/{tail}", self.owner, self.repo)
+    /// The REST URL of `tail` under this PR's repo.
+    fn url(&self, tail: impl Display) -> String {
+        rest_url(&self.host, format_args!("repos/{}/{}/{tail}", self.owner, self.repo))
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct RestPr {
     state: String,
     merged: bool,
@@ -44,7 +48,7 @@ struct RestPr {
     head: Head,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Head {
     sha: String,
 }
@@ -104,7 +108,7 @@ pub(super) struct CommitStatus {
 }
 
 pub struct Polled {
-    pub snapshot: PrSnapshot,
+    pub snapshot: Arc<PrSnapshot>,
     pub events: Vec<Event>,
     /// Something moved, even if no event was worth reporting.
     pub changed: bool,
@@ -128,6 +132,9 @@ pub struct GithubPr {
     runs: Vec<CheckRun>,
     statuses: Vec<CommitStatus>,
     checks: Option<ChecksSummary>,
+    /// The last snapshot handed out; dropped whenever the PR or its checks
+    /// change, so a quiet poll shares it instead of building another.
+    snapshot: Option<Arc<PrSnapshot>>,
 }
 
 impl GithubPr {
@@ -145,6 +152,7 @@ impl GithubPr {
             runs: Vec::new(),
             statuses: Vec::new(),
             checks: None,
+            snapshot: None,
         }
     }
 
@@ -156,37 +164,46 @@ impl GithubPr {
         // All or nothing: the ETag, PR state, and seen ids only move once every
         // follow-up read succeeded. On failure the next poll gets a 200 against
         // the old ETag and rebuilds the same events, so none are lost or doubled.
-        let path = self.pr.path(&format!("pulls/{number}"));
-        let etag = self.pr_etag.clone();
-        if let Some(response) = self.get(gh, budget, &path, etag.as_deref()).await? {
+        let url = self.pr.url(format_args!("pulls/{number}"));
+        let etag = self.pr_etag.as_deref();
+        if let Some(response) = get(gh, budget, &self.pr.host, &mut self.rate, &url, etag).await? {
             let next: RestPr = response.json()?;
             let mut comments = Vec::new();
             let mut reviews = Vec::new();
 
-            match self.last.clone() {
+            // What moved since the last read, settled before the follow-up
+            // reads borrow `self`.
+            let moved = match &self.last {
                 None => {
-                    self.since = next.updated_at.clone();
+                    self.since.clone_from(&next.updated_at);
                     events.extend(ended(&next));
+                    None
                 }
                 Some(prev) => {
-                    changed = prev.updated_at != next.updated_at;
-                    events.extend(transitions(&prev, &next));
-                    if next.comments != prev.comments {
-                        comments
-                            .extend(self.comments(gh, budget, &format!("issues/{number}")).await?);
-                    }
-                    if next.review_comments != prev.review_comments {
-                        comments
-                            .extend(self.comments(gh, budget, &format!("pulls/{number}")).await?);
-                    }
-                    if changed {
-                        reviews = self.reviews(gh, budget).await?;
-                    }
+                    events.extend(transitions(prev, &next));
+                    Some((
+                        prev.updated_at != next.updated_at,
+                        next.comments != prev.comments,
+                        next.review_comments != prev.review_comments,
+                    ))
+                }
+            };
+            if let Some((updated, new_comments, new_review_comments)) = moved {
+                changed = updated;
+                if new_comments {
+                    comments.extend(self.comments(gh, budget, "issues").await?);
+                }
+                if new_review_comments {
+                    comments.extend(self.comments(gh, budget, "pulls").await?);
+                }
+                if changed {
+                    reviews = self.reviews(gh, budget).await?;
                 }
             }
 
             self.pr_etag = response.etag;
             self.last = Some(next);
+            self.snapshot = None;
             for (id, event) in comments {
                 self.seen_comments.insert(id);
                 events.push(event);
@@ -198,14 +215,14 @@ impl GithubPr {
         }
 
         let Some(pr) = &self.last else {
-            return Err(CliError::parse_error("github", &path, "no PR data yet"));
+            return Err(CliError::parse_error("github", &url, "no PR data yet"));
         };
 
         // Checks are read separately: failing them must not drop PR events.
         let mut warning = None;
         if pr.state == "open" {
             let sha = pr.head.sha.clone();
-            match self.refresh_checks(gh, budget, &sha).await {
+            match self.refresh_checks(gh, budget, sha).await {
                 Ok(Some(event)) => {
                     changed = true;
                     events.push(event);
@@ -215,48 +232,62 @@ impl GithubPr {
             }
         }
 
-        Ok(Polled { snapshot: self.snapshot(), events, changed, warning })
+        let snapshot = if let Some(snapshot) = &self.snapshot {
+            Arc::clone(snapshot)
+        } else {
+            let snapshot = Arc::new(self.snapshot_now());
+            self.snapshot = Some(Arc::clone(&snapshot));
+            snapshot
+        };
+        Ok(Polled { snapshot, events, changed, warning })
     }
 
-    fn snapshot(&self) -> PrSnapshot {
+    fn snapshot_now(&self) -> PrSnapshot {
         let pr = self.last.as_ref().expect("snapshot after a successful PR read");
         PrSnapshot {
             pr: self.pr.number,
             url: pr.html_url.clone(),
-            state: if pr.merged { "merged".to_string() } else { pr.state.clone() },
+            state: if pr.merged {
+                "merged"
+            } else if pr.state == "closed" {
+                "closed"
+            } else {
+                "open"
+            },
             head_sha: pr.head.sha.clone(),
             checks: self.checks.clone(),
         }
     }
 
-    /// New issue comments (`issues/N`) or inline review comments (`pulls/N`).
+    /// New issue comments (`issues`) or inline review comments (`pulls`).
     async fn comments(
         &mut self,
         gh: &GitHubProvider,
         budget: &ApiBudget,
-        owner: &str,
+        kind: &'static str,
     ) -> Result<Vec<(u64, Event)>> {
+        let number = self.pr.number;
         let mut events = Vec::new();
         for page in 1..=MAX_PAGES {
-            let tail = format!("{owner}/comments?since={}&per_page={PAGE}&page={page}", self.since);
-            let Some(response) = self.get(gh, budget, &self.pr.path(&tail), None).await? else {
+            let url = self.pr.url(format_args!(
+                "{kind}/{number}/comments?since={}&per_page={PAGE}&page={page}",
+                self.since
+            ));
+            let Some(response) = get(gh, budget, &self.pr.host, &mut self.rate, &url, None).await?
+            else {
                 break;
             };
             let batch: Vec<RestComment> = response.json()?;
             let full = batch.len() == PAGE;
             for c in batch {
                 if c.created_at > self.since && !self.seen_comments.contains(&c.id) {
+                    let author = login(c.user);
+                    let body = readable_by(&author, c.body.as_deref().unwrap_or_default());
                     events.push((
                         c.id,
                         Event::Comment {
-                            body: clip(
-                                readable_by(
-                                    &login(c.user.clone()),
-                                    c.body.as_deref().unwrap_or_default(),
-                                ),
-                                EVENT_BODY_LIMIT,
-                            ),
-                            author: login(c.user),
+                            body: clip(body, EVENT_BODY_LIMIT),
+                            author,
                             url: c.html_url,
                             at: c.created_at,
                             path: c.path,
@@ -277,10 +308,13 @@ impl GithubPr {
         gh: &GitHubProvider,
         budget: &ApiBudget,
     ) -> Result<Vec<(u64, Event)>> {
+        let number = self.pr.number;
         let mut events = Vec::new();
         for page in 1..=MAX_PAGES {
-            let tail = format!("pulls/{}/reviews?per_page={PAGE}&page={page}", self.pr.number);
-            let Some(response) = self.get(gh, budget, &self.pr.path(&tail), None).await? else {
+            let url =
+                self.pr.url(format_args!("pulls/{number}/reviews?per_page={PAGE}&page={page}"));
+            let Some(response) = get(gh, budget, &self.pr.host, &mut self.rate, &url, None).await?
+            else {
                 break;
             };
             let batch: Vec<RestReview> = response.json()?;
@@ -288,17 +322,13 @@ impl GithubPr {
             for r in batch {
                 let fresh = r.submitted_at.as_deref().is_some_and(|at| at > self.since.as_str());
                 if fresh && r.state != "PENDING" && !self.seen_reviews.contains(&r.id) {
+                    let author = login(r.user);
+                    let body = readable_by(&author, r.body.as_deref().unwrap_or_default());
                     events.push((
                         r.id,
                         Event::Review {
-                            body: clip(
-                                readable_by(
-                                    &login(r.user.clone()),
-                                    r.body.as_deref().unwrap_or_default(),
-                                ),
-                                EVENT_BODY_LIMIT,
-                            ),
-                            author: login(r.user),
+                            body: clip(body, EVENT_BODY_LIMIT),
+                            author,
                             state: r.state,
                             url: r.html_url,
                             at: r.submitted_at,
@@ -319,7 +349,7 @@ impl GithubPr {
         &mut self,
         gh: &GitHubProvider,
         budget: &ApiBudget,
-        sha: &str,
+        sha: String,
     ) -> Result<Option<Event>> {
         if self.checks.as_ref().is_some_and(|c| c.sha != sha) {
             self.runs_etag = None;
@@ -327,52 +357,58 @@ impl GithubPr {
             self.checks = None;
         }
 
-        let path = self.pr.path(&format!("commits/{sha}/check-runs?per_page={PAGE}"));
-        let etag = self.runs_etag.clone();
-        let runs = self.get(gh, budget, &path, etag.as_deref()).await?;
-        let path = self.pr.path(&format!("commits/{sha}/status?per_page={PAGE}"));
-        let etag = self.status_etag.clone();
-        let statuses = self.get(gh, budget, &path, etag.as_deref()).await?;
+        let host = &self.pr.host;
+        let url = self.pr.url(format_args!("commits/{sha}/check-runs?per_page={PAGE}"));
+        let runs = get(gh, budget, host, &mut self.rate, &url, self.runs_etag.as_deref()).await?;
+        let url = self.pr.url(format_args!("commits/{sha}/status?per_page={PAGE}"));
+        let statuses =
+            get(gh, budget, host, &mut self.rate, &url, self.status_etag.as_deref()).await?;
 
         if runs.is_none() && statuses.is_none() && self.checks.is_some() {
             return Ok(None);
         }
+        // An ETag is kept only once its body parsed, so a bad body is read
+        // again instead of hiding behind a 304.
         if let Some(response) = runs {
-            self.runs_etag = response.etag.clone();
             self.runs = response.json::<CheckRuns>()?.check_runs;
+            self.runs_etag = response.etag;
         }
         if let Some(response) = statuses {
-            self.status_etag = response.etag.clone();
             self.statuses = response.json::<CombinedStatus>()?.statuses;
+            self.status_etag = response.etag;
         }
 
         let summary = summarize(sha, &self.runs, &self.statuses);
         let moved = self.checks.as_ref().is_none_or(|prev| prev.conclusion != summary.conclusion);
-        let settled = !matches!(summary.conclusion.as_str(), "pending" | "no_checks");
-        self.checks = Some(summary.clone());
-        Ok((moved && settled).then_some(Event::Checks(summary)))
+        let settled = !matches!(summary.conclusion, "pending" | "no_checks");
+        let event = (moved && settled).then(|| Event::Checks(summary.clone()));
+        self.checks = Some(summary);
+        self.snapshot = None;
+        Ok(event)
     }
+}
 
-    /// `Some` on 200, `None` on 304; other statuses are errors.
-    async fn get(
-        &mut self,
-        gh: &GitHubProvider,
-        budget: &ApiBudget,
-        path: &str,
-        etag: Option<&str>,
-    ) -> Result<Option<ApiResponse>> {
-        budget.acquire().await;
-        let response = gh.api_get(&self.pr.host, path, etag).await?;
-        self.rate = RateHint {
-            remaining: response.rate_remaining,
-            reset: response.rate_reset,
-            retry_after: response.retry_after,
-        };
-        match response.status {
-            200 => Ok(Some(response)),
-            304 => Ok(None),
-            _ => Err(response.error(&format!("GET {path}"))),
-        }
+/// `Some` on 200, `None` on 304; other statuses are errors. Takes the fields
+/// it touches rather than the whole PR, so callers lend their `ETag`s.
+async fn get(
+    gh: &GitHubProvider,
+    budget: &ApiBudget,
+    host: &str,
+    rate: &mut RateHint,
+    url: &str,
+    etag: Option<&str>,
+) -> Result<Option<ApiResponse>> {
+    budget.acquire().await;
+    let response = gh.api_get(host, url, etag).await?;
+    *rate = RateHint {
+        remaining: response.rate_remaining,
+        reset: response.rate_reset,
+        retry_after: response.retry_after,
+    };
+    match response.status {
+        200 => Ok(Some(response)),
+        304 => Ok(None),
+        _ => Err(response.error(format_args!("GET {url}"))),
     }
 }
 
@@ -392,7 +428,7 @@ fn transitions(prev: &RestPr, next: &RestPr) -> Vec<Event> {
 fn ended(pr: &RestPr) -> Option<Event> {
     if pr.merged {
         Some(Event::Merged {
-            by: pr.merged_by.clone().map(|u| u.login),
+            by: pr.merged_by.as_ref().map(|u| u.login.clone()),
             sha: pr.merge_commit_sha.clone(),
             at: pr.merged_at.clone(),
         })
@@ -403,7 +439,11 @@ fn ended(pr: &RestPr) -> Option<Event> {
     }
 }
 
-pub(super) fn summarize(sha: &str, runs: &[CheckRun], statuses: &[CommitStatus]) -> ChecksSummary {
+pub(super) fn summarize(
+    sha: String,
+    runs: &[CheckRun],
+    statuses: &[CommitStatus],
+) -> ChecksSummary {
     let mut counts = CheckCounts::default();
     let mut failed = Vec::new();
 
@@ -430,12 +470,7 @@ pub(super) fn summarize(sha: &str, runs: &[CheckRun], statuses: &[CommitStatus])
         }
     }
 
-    ChecksSummary {
-        sha: sha.to_string(),
-        conclusion: counts.conclusion().to_string(),
-        counts,
-        failed,
-    }
+    ChecksSummary { sha, conclusion: counts.conclusion(), counts, failed }
 }
 
 #[cfg(test)]

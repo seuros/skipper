@@ -34,7 +34,7 @@ pub struct WritesConfig {
     pub confirm: bool,
 }
 
-fn confirm_by_default() -> bool {
+const fn confirm_by_default() -> bool {
     true
 }
 
@@ -94,30 +94,16 @@ impl Config {
         Self::load_with(Path::new("skipper.toml"), global.as_deref())
     }
 
+    /// Each file is read once: the global config is the base, `[writes]`
+    /// included, and the local one merges over it without `[writes]`.
     pub fn load_with(local: &Path, global: Option<&Path>) -> Self {
-        let mut paths = vec![local.to_path_buf()];
-        paths.extend(global.map(Path::to_path_buf));
-        let mut config = Self::load_from_paths(&paths);
-        config.writes = global
-            .filter(|path| path.exists())
-            .and_then(Self::read_logged)
-            .map(|global| global.writes)
-            .unwrap_or_default();
-        config
-    }
-
-    /// Later paths are overridden by earlier ones. `[writes]` is not merged.
-    pub fn load_from_paths(paths: &[PathBuf]) -> Self {
-        let mut config = Config::default();
-
-        for path in paths.iter().rev() {
-            if path.exists()
-                && let Some(loaded) = Self::read_logged(path)
-            {
-                config = config.merge(loaded);
-            }
+        let mut config =
+            global.filter(|path| path.exists()).and_then(Self::read_logged).unwrap_or_default();
+        if local.exists()
+            && let Some(local) = Self::read_logged(local)
+        {
+            config = config.merge(local);
         }
-
         config
     }
 
@@ -139,16 +125,17 @@ impl Config {
         toml::from_str(&contents).map_err(|e| ConfigError::Parse(path.to_path_buf(), e.to_string()))
     }
 
-    fn merge(mut self, other: Config) -> Self {
+    /// `other` over `self`; `[writes]` stays `self`'s.
+    fn merge(mut self, other: Self) -> Self {
         self.default_provider = other.default_provider.or(self.default_provider);
         self.remotes.extend(other.remotes);
         self.hosts.extend(other.hosts);
 
         let (ours, theirs) = (&mut self.providers, other.providers);
-        ours.github = theirs.github.or(ours.github.take());
-        ours.gitlab = theirs.gitlab.or(ours.gitlab.take());
-        ours.gitea = theirs.gitea.or(ours.gitea.take());
-        ours.forgejo = theirs.forgejo.or(ours.forgejo.take());
+        ours.github = theirs.github.or_else(|| ours.github.take());
+        ours.gitlab = theirs.gitlab.or_else(|| ours.gitlab.take());
+        ours.gitea = theirs.gitea.or_else(|| ours.gitea.take());
+        ours.forgejo = theirs.forgejo.or_else(|| ours.forgejo.take());
 
         self
     }
@@ -168,7 +155,7 @@ impl Config {
     }
 
     pub fn is_disabled(&self, provider: &str) -> bool {
-        self.provider_settings(provider).map(|s| s.disabled).unwrap_or(false)
+        self.provider_settings(provider).is_some_and(|s| s.disabled)
     }
 
     pub fn provider_url(&self, provider: &str) -> Option<&str> {

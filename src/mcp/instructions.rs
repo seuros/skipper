@@ -22,7 +22,7 @@ pub fn for_client(ctx: &InstructionsContext<'_>) -> Option<String> {
 // release that fixes it.
 
 /// Clients that never list MCP resources to their model: resources sit behind
-/// ReadMcpResourceTool, so the instructions inline the catalog.
+/// `ReadMcpResourceTool`, so the instructions inline the catalog.
 const HIDES_RESOURCES: &[&str] = &["claude-code"];
 
 /// Clients that replace any failed resource read with their own text: the

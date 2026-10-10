@@ -19,6 +19,6 @@ fn test_graphql_issue_maps_deleted_author_and_missing_labels() {
         .collect();
 
     assert_eq!((issues[0].author.as_str(), issues[0].state.as_str()), ("ghost", "open"));
-    assert!(issues[0].labels.is_empty());
+    assert_eq!(issues[0].labels, [] as [std::string::String; 0]);
     assert_eq!((issues[1].labels.as_slice(), issues[1].comments), (&["docs".to_string()][..], 2));
 }

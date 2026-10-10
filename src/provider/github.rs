@@ -1,7 +1,7 @@
 use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::error::{CliError, Result};
 use crate::executor::{self};
-use crate::provider::{BoxFuture, BuildRun, Provider, retryable, retrying};
+use crate::provider::{BoxFuture, BuildRun, Provider, is_zero, retryable, retrying};
 use crate::version::minimum;
 use crate::workspace::ForgeRepo;
 use schemars::JsonSchema;
@@ -19,6 +19,7 @@ mod pulls;
 mod runs;
 
 pub use client::ApiResponse;
+pub(crate) use client::rest_url;
 pub use discussion::{PrDiscussion, PrNote};
 pub(crate) use discussion::{User, login};
 pub use pulls::{CheckVerdict, PrFile, PrOverview};
@@ -39,14 +40,19 @@ impl AuthReport {
     /// `Err` when nothing succeeded but a check failed on the network (gh
     /// reports resets as `error`, not `timeout`): login unknown.
     fn logged_in(self) -> Result<bool> {
-        let entries: Vec<AuthEntry> = self.hosts.into_values().flatten().collect();
-        if entries.iter().any(|e| e.state == "success") {
-            return Ok(true);
+        let mut unreachable = None;
+        for entry in self.hosts.into_values().flatten() {
+            if entry.state == "success" {
+                return Ok(true);
+            }
+            if unreachable.is_none()
+                && (entry.state == "timeout"
+                    || entry.error.as_deref().is_some_and(super::network_failure))
+            {
+                unreachable = Some(entry);
+            }
         }
-        let unreachable = |e: &AuthEntry| {
-            e.state == "timeout" || e.error.as_deref().is_some_and(super::network_failure)
-        };
-        match entries.into_iter().find(unreachable) {
+        match unreachable {
             Some(e) => Err(CliError::execution_failed(
                 "gh",
                 1,
@@ -63,7 +69,7 @@ pub struct GitHubProvider {
 }
 
 impl GitHubProvider {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { min_version: minimum::github() }
     }
 }
@@ -89,7 +95,7 @@ impl Provider for GitHubProvider {
 
     fn check_auth(&self) -> BoxFuture<'_, crate::error::Result<bool>> {
         Box::pin(async move {
-            match client::get("github.com", "user", None).await {
+            match client::get("github.com", "https://api.github.com/user", None).await {
                 Ok(response) if response.status == 200 => Ok(true),
                 Ok(response) if matches!(response.status, 401 | 403) => Ok(false),
                 Ok(response) => Err(response.error("auth check")),
@@ -132,7 +138,7 @@ impl Provider for GitHubProvider {
             if let Some(id) = id {
                 return self.run(&repo, id).await;
             }
-            let branch = crate::git::repo_info(env.cwd()).ok().and_then(|info| info.branch);
+            let branch = crate::git::current_branch(env.cwd()).ok().flatten();
             self.runs(&repo, branch.as_deref(), 1).await?.pop().ok_or_else(|| {
                 CliError::no_target(match &branch {
                     Some(branch) => format!("no CI runs for {branch} in {}", repo.full_name()),
@@ -144,10 +150,11 @@ impl Provider for GitHubProvider {
 }
 
 impl GitHubProvider {
-    /// GET a REST `path` on `host`, conditional on `etag` when given. Any HTTP
-    /// status comes back as `Ok`; only a failure to get a response is an `Err`.
-    pub async fn api_get(&self, host: &str, path: &str, etag: Option<&str>) -> Result<ApiResponse> {
-        client::get(host, path, etag).await
+    /// GET a REST `url` ([`rest_url`]) on `host`, conditional on `etag` when
+    /// given. Any HTTP status comes back as `Ok`; only a failure to get a
+    /// response is an `Err`.
+    pub async fn api_get(&self, host: &str, url: &str, etag: Option<&str>) -> Result<ApiResponse> {
+        client::get(host, url, etag).await
     }
 
     pub async fn pr_checks_watch(
@@ -171,18 +178,25 @@ impl GitHubProvider {
         }
     }
 
-    async fn api_json_at<T: DeserializeOwned>(&self, host: &str, path: &str) -> Result<T> {
-        retrying(|| client::get(host, path, None)).await?.ok_json(path)
+    /// GET `url` ([`rest_url`], built once by the caller) as `T`, retried.
+    async fn api_json_at<T: DeserializeOwned>(&self, host: &str, url: &str) -> Result<T> {
+        retrying(|| client::get(host, url, None)).await?.ok_json(url)
     }
 
-    async fn graphql<T: DeserializeOwned>(
+    async fn graphql<T: DeserializeOwned, V: Serialize + Sync + ?Sized>(
         &self,
         host: &str,
         query: &str,
-        variables: serde_json::Value,
+        variables: &V,
     ) -> Result<T> {
-        retrying(|| client::graphql(host, query, variables.clone())).await
+        retrying(|| client::graphql(host, query, variables)).await
     }
+}
+
+/// `s` lowercased in place: GitHub's enum values are ASCII.
+pub(crate) fn lowercase(mut s: String) -> String {
+    s.make_ascii_lowercase();
+    s
 }
 
 /// REST page size: GitHub's maximum `per_page`.
@@ -194,21 +208,29 @@ pub(crate) fn run_bucket(status: &str, conclusion: Option<&str>) -> &'static str
     if !status.eq_ignore_ascii_case("completed") {
         return "pending";
     }
-    match conclusion.map(str::to_ascii_lowercase).as_deref() {
-        Some("success") => "pass",
-        Some("skipped" | "neutral") => "skipping",
-        Some("cancelled") => "cancel",
-        Some("stale") => "pending",
-        _ => "fail",
+    let is = |value: &str| conclusion.is_some_and(|c| c.eq_ignore_ascii_case(value));
+    if is("success") {
+        "pass"
+    } else if is("skipped") || is("neutral") {
+        "skipping"
+    } else if is("cancelled") {
+        "cancel"
+    } else if is("stale") {
+        "pending"
+    } else {
+        "fail"
     }
 }
 
 /// gh's bucket for a commit status.
 pub(crate) fn status_bucket(state: &str) -> &'static str {
-    match state.to_ascii_lowercase().as_str() {
-        "success" => "pass",
-        "pending" | "expected" => "pending",
-        _ => "fail",
+    let is = |value: &str| state.eq_ignore_ascii_case(value);
+    if is("success") {
+        "pass"
+    } else if is("pending") || is("expected") {
+        "pending"
+    } else {
+        "fail"
     }
 }
 
@@ -294,7 +316,7 @@ pub struct PrState {
 pub struct PrCheck {
     pub name: String,
     /// gh's classification: pass | fail | pending | skipping | cancel
-    pub bucket: String,
+    pub bucket: &'static str,
     /// Owning workflow; absent for commit statuses.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub workflow: String,
@@ -306,7 +328,7 @@ pub struct PrCheck {
 }
 
 /// Checks tallied by bucket; buckets with none are left out.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct CheckCounts {
     #[serde(skip_serializing_if = "is_zero")]
     pub pass: u32,
@@ -320,15 +342,11 @@ pub struct CheckCounts {
     pub cancelled: u32,
 }
 
-fn is_zero(n: &u32) -> bool {
-    *n == 0
-}
-
 impl CheckCounts {
     pub fn tally(checks: &[PrCheck]) -> Self {
         let mut counts = Self::default();
         for check in checks {
-            counts.add(&check.bucket);
+            counts.add(check.bucket);
         }
         counts
     }
@@ -343,11 +361,11 @@ impl CheckCounts {
         }
     }
 
-    pub fn total(&self) -> u32 {
+    pub const fn total(&self) -> u32 {
         self.pass + self.fail + self.pending + self.skipped + self.cancelled
     }
 
-    pub fn conclusion(&self) -> &'static str {
+    pub const fn conclusion(&self) -> &'static str {
         if self.total() == 0 {
             "no_checks"
         } else if self.fail > 0 {
