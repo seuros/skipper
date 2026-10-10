@@ -16,10 +16,6 @@ pub mod minimum {
     pub const fn gitlab() -> Version {
         Version::new(1, 40, 0)
     }
-
-    pub const fn git() -> Version {
-        Version::new(2, 25, 0)
-    }
 }
 
 pub fn parse_version(output: &str, cli: &str) -> Result<Version> {

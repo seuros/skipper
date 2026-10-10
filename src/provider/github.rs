@@ -15,15 +15,14 @@ mod client;
 mod discussion;
 mod forks;
 mod issues;
-mod pulls;
+pub(crate) mod pulls;
 mod runs;
 
 pub use client::ApiResponse;
 pub(crate) use client::rest_url;
-pub use discussion::{PrDiscussion, PrNote};
+pub use discussion::PrDiscussion;
 pub(crate) use discussion::{User, login};
-pub use pulls::{CheckVerdict, PrFile, PrOverview};
-pub use runs::OwnedRepo;
+pub use pulls::{PrFile, PrOverview};
 
 #[derive(Deserialize)]
 struct AuthReport {

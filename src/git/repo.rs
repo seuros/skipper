@@ -19,13 +19,7 @@ pub struct RepoInfo {
     pub default_branch: Option<String>,
 }
 
-pub fn info(cwd: &Path) -> Result<RepoInfo, GitError> {
-    let repo = open_repo(cwd)?;
-    let remote = crate::git::remotes::current_in(&repo);
-    Ok(info_in(&repo, remote))
-}
-
-/// [`info`] and every remote, from one open of the repository.
+/// The repository's identity and every remote, from one open of it.
 pub fn info_with_remotes(cwd: &Path) -> Result<(RepoInfo, BTreeMap<String, String>), GitError> {
     let repo = open_repo(cwd)?;
     let (remotes, current) = crate::git::remotes::with_current_in(&repo);

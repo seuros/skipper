@@ -1,13 +1,9 @@
-use semver::Version;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error("{cli} is not installed or not in PATH")]
     NotInstalled { cli: String },
-
-    #[error("{cli} version {found} is below minimum required {required}")]
-    VersionTooLow { cli: String, found: Version, required: Version },
 
     #[error("{cli} requires authentication - run `{cli} auth login`")]
     AuthRequired { cli: String },
@@ -49,10 +45,6 @@ impl CliError {
         Self::NotInstalled { cli: cli.into() }
     }
 
-    pub fn version_too_low(cli: impl Into<String>, found: Version, required: Version) -> Self {
-        Self::VersionTooLow { cli: cli.into(), found, required }
-    }
-
     pub fn auth_required(cli: impl Into<String>) -> Self {
         Self::AuthRequired { cli: cli.into() }
     }
@@ -88,32 +80,6 @@ impl CliError {
     pub fn no_target(message: impl Into<String>) -> Self {
         Self::NoTarget(message.into())
     }
-
-    pub fn cli(&self) -> &str {
-        match self {
-            Self::NotInstalled { cli }
-            | Self::VersionTooLow { cli, .. }
-            | Self::AuthRequired { cli }
-            | Self::ExecutionFailed { cli, .. }
-            | Self::ParseError { cli, .. }
-            | Self::Timeout { cli, .. }
-            | Self::Io { cli, .. }
-            | Self::Json { cli, .. }
-            | Self::Unsupported { cli, .. } => cli,
-            Self::NoTarget(_) => "",
-        }
-    }
-
-    pub const fn is_unavailable(&self) -> bool {
-        matches!(self, Self::NotInstalled { .. } | Self::VersionTooLow { .. })
-    }
-
-    pub const fn needs_auth(&self) -> bool {
-        matches!(self, Self::AuthRequired { .. })
-    }
 }
 
 pub type Result<T> = std::result::Result<T, CliError>;
-
-#[cfg(test)]
-mod tests;

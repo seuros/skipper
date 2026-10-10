@@ -49,11 +49,19 @@ impl ProviderStatus {
     pub const fn is_unreachable(&self) -> bool {
         matches!(self, Self::Unreachable)
     }
+}
 
-    pub const fn version(&self) -> Option<&Version> {
+/// How the detection log reads.
+impl std::fmt::Display for ProviderStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Available { version } => Some(version),
-            _ => None,
+            Self::Available { version } => write!(f, "available, v{version}"),
+            Self::NotInstalled => f.write_str("not installed"),
+            Self::VersionTooLow { found, required } => {
+                write!(f, "v{found} is below the required v{required}")
+            }
+            Self::AuthRequired => f.write_str("not logged in"),
+            Self::Unreachable => f.write_str("unreachable"),
         }
     }
 }
@@ -239,14 +247,6 @@ pub trait Provider: Send + Sync {
         Box::pin(executor::execute_success(self.cli(), args, Duration::from_secs(30)))
     }
 
-    fn execute_with_timeout<'a>(
-        &'a self,
-        args: &'a [&'a str],
-        timeout: Duration,
-    ) -> BoxFuture<'a, Result<executor::Output>> {
-        Box::pin(executor::execute_success(self.cli(), args, timeout))
-    }
-
     /// Recent CI runs of the workspace's repo on this forge.
     fn ci_runs<'a>(
         &'a self,
@@ -364,7 +364,7 @@ impl Registry {
                     continue;
                 }
             };
-            tracing::info!(provider = name, status = ?status, "provider detection complete");
+            tracing::info!(provider = name, %status, "provider detection complete");
             self.status_mut().insert(name, status.clone());
             results.push((name, status));
         }
@@ -416,14 +416,6 @@ impl Registry {
 
     pub fn get_arc(&self, name: &str) -> Option<Arc<dyn Provider>> {
         self.providers.get(name).cloned()
-    }
-
-    pub fn status(&self, name: &str) -> Option<ProviderStatus> {
-        self.status_ref().get(name).cloned()
-    }
-
-    pub fn enabled_names(&self) -> Vec<&'static str> {
-        self.status_ref().iter().filter(|(_, s)| s.is_available()).map(|(n, _)| *n).collect()
     }
 
     pub fn is_enabled(&self, name: &str) -> bool {

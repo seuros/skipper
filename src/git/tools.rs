@@ -214,17 +214,7 @@ pub struct GitBlameParams {
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
-pub struct GitRepoParams {}
-
-#[derive(Debug, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-#[schemars(deny_unknown_fields)]
 pub struct GitStatusParams {}
-
-#[derive(Debug, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-#[schemars(deny_unknown_fields)]
-pub struct GitRemotesParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -336,18 +326,6 @@ impl GitServer {
     }
 
     #[mcp_tool(
-        name = "git_repo",
-        description = "Show repository identity: root path, HEAD sha, current branch, remotes, and dirty state.",
-        read_only = true,
-        open_world = false
-    )]
-    async fn git_repo(&self, _ctx: GitCtx<'_>, params: Parameters<GitRepoParams>) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_repo_structured).await,
-        )
-    }
-
-    #[mcp_tool(
         name = "git_status",
         description = "List staged, unstaged, and untracked files in the worktree.",
         read_only = true,
@@ -360,22 +338,6 @@ impl GitServer {
     ) -> ToolResult {
         output_from_json_result(
             execute_blocking(PathBuf::from("."), params.0, execute_git_status_structured).await,
-        )
-    }
-
-    #[mcp_tool(
-        name = "git_remotes",
-        description = "List configured remotes with their fetch and push URLs.",
-        read_only = true,
-        open_world = false
-    )]
-    async fn git_remotes(
-        &self,
-        _ctx: GitCtx<'_>,
-        params: Parameters<GitRemotesParams>,
-    ) -> ToolResult {
-        output_from_json_result(
-            execute_blocking(PathBuf::from("."), params.0, execute_git_remotes_structured).await,
         )
     }
 
@@ -425,22 +387,6 @@ impl GitServer {
             execute_blocking(PathBuf::from("."), params.0, execute_git_branch_structured).await,
         )
     }
-}
-
-pub fn tool_infos() -> Vec<ToolInfo> {
-    vec![
-        GitServer::git_diff_tool_info(),
-        GitServer::git_log_tool_info(),
-        GitServer::git_show_tool_info(),
-        GitServer::git_show_file_tool_info(),
-        GitServer::git_blame_tool_info(),
-        GitServer::git_repo_tool_info(),
-        GitServer::git_status_tool_info(),
-        GitServer::git_remotes_tool_info(),
-        GitServer::git_add_tool_info(),
-        GitServer::git_commit_tool_info(),
-        GitServer::git_branch_tool_info(),
-    ]
 }
 
 fn execute_git_diff_structured_with_cancel(
@@ -573,27 +519,11 @@ pub fn execute_git_blame_structured(
     Ok(object([("lines", to_json_value(&blamed)?)]))
 }
 
-pub fn execute_git_repo_structured(
-    cwd: &Path,
-    GitRepoParams {}: GitRepoParams,
-) -> Result<serde_json::Value, GitToolError> {
-    let info = crate::git::repo_info(cwd)?;
-    to_json_value(&info)
-}
-
 pub fn execute_git_status_structured(
     cwd: &Path,
     GitStatusParams {}: GitStatusParams,
 ) -> Result<serde_json::Value, GitToolError> {
     let info = crate::git::status(cwd)?;
-    to_json_value(&info)
-}
-
-pub fn execute_git_remotes_structured(
-    cwd: &Path,
-    GitRemotesParams {}: GitRemotesParams,
-) -> Result<serde_json::Value, GitToolError> {
-    let info = crate::git::remotes(cwd)?;
     to_json_value(&info)
 }
 

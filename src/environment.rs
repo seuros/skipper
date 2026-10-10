@@ -31,10 +31,6 @@ pub struct SkipperEnvironment {
 }
 
 impl SkipperEnvironment {
-    pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        Self::with_hosts(cwd, ForgeHosts::with_defaults())
-    }
-
     pub fn with_hosts(cwd: impl Into<PathBuf>, hosts: ForgeHosts) -> Self {
         let env = Self { cwd: cwd.into(), hosts, state: RwLock::new(RepoState::default()) };
         env.refresh();

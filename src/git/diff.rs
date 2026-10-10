@@ -98,25 +98,6 @@ pub struct DiffReport {
     pub whitespace_errors: Vec<WhitespaceError>,
 }
 
-pub fn diff_report(
-    cwd: &Path,
-    scope: DiffScope,
-    format: DiffFormat,
-    base: Option<&str>,
-    paths: Option<&[&str]>,
-    check_whitespace: bool,
-) -> Result<DiffReport, GitError> {
-    diff_report_with_cancel(
-        cwd,
-        scope,
-        format,
-        base,
-        paths,
-        check_whitespace,
-        &Arc::new(AtomicBool::new(false)),
-    )
-}
-
 pub(crate) fn diff_report_with_cancel(
     cwd: &Path,
     scope: DiffScope,
@@ -229,11 +210,6 @@ pub(crate) fn diff_report_with_cancel(
     };
 
     Ok(DiffReport { paths: confirmed_paths, files, summary, whitespace_errors })
-}
-
-pub fn diff(cwd: &Path, base: Option<&str>, paths: Option<&[&str]>) -> Result<String, GitError> {
-    let report = diff_report(cwd, DiffScope::All, DiffFormat::Patch, base, paths, false)?;
-    Ok(report.files.into_iter().map(|file| file.patch).collect())
 }
 
 /// The paths to diff, and those changed both staged and in the worktree:

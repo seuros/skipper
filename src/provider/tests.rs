@@ -1,28 +1,11 @@
 use super::*;
 
 #[test]
-fn test_provider_status() {
-    let available = ProviderStatus::Available { version: Version::new(1, 0, 0) };
-    assert!(available.is_available());
-    assert_eq!(available.version(), Some(&Version::new(1, 0, 0)));
-
-    let not_installed = ProviderStatus::NotInstalled;
-    assert!(!not_installed.is_available());
-    assert_eq!(not_installed.version(), None);
-}
-
-#[test]
 fn test_registry_leaves_out_disabled_forges() {
     let registry = Registry::with_defaults(|forge| forge == "tea");
     assert!(registry.get("tea").is_none());
     #[cfg(feature = "github")]
     assert!(registry.get("github").is_some());
-}
-
-#[test]
-fn test_registry_new() {
-    let registry = Registry::new();
-    assert_eq!(registry.enabled_names(), Vec::<&str>::new());
 }
 
 #[cfg(any(feature = "github", feature = "gitlab"))]

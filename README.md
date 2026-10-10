@@ -148,10 +148,9 @@ Or build it yourself:
 cargo install skipper
 ```
 
-Either way you get the `skipper-mcp` binary. Skipper is a server, not a library:
-the Rust API exists so the binary and the tests can share code, and it is not
-a supported interface. Depend on the MCP tools and resources, not on
-`skipper::*`.
+Either way you get the `skipper-mcp` binary. Skipper is a server, not a
+library: the crate builds the binary alone. Depend on the MCP tools and
+resources.
 
 ## MCP setup
 
@@ -293,8 +292,7 @@ Optional: `skipper.toml` in the repo root or `~/.config/skipper/config.toml`
 ## Testing
 
 ```bash
-cargo test                       # unit + detection tests (no auth needed)
-SKIPPER_LIVE_TESTS=1 cargo test  # live forge commands via your CLIs
+cargo test   # unit tests; git fixtures need `git`, nothing reaches a forge
 ```
 
 ## Contributing

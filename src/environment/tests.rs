@@ -1,13 +1,17 @@
 use super::*;
+use std::process::Command;
 
-#[tokio::test]
-async fn test_environment_outside_a_repo() {
-    let dir = std::env::temp_dir().join("skipper-env-norepo");
-    std::fs::create_dir_all(&dir).unwrap();
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git").args(args).current_dir(dir).status().expect("run git");
+    assert!(status.success(), "git {args:?}");
+}
 
-    let env = SkipperEnvironment::new(&dir);
+#[test]
+fn test_environment_outside_a_repo() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let env = SkipperEnvironment::with_hosts(temp.path(), ForgeHosts::with_defaults());
 
-    assert_eq!(env.cwd(), dir.as_path());
+    assert_eq!(env.cwd(), temp.path());
     assert!(!env.has_git_repo());
     // No repo means no remotes, so no forge tools regardless of installed CLIs.
     assert!(env.forges().is_empty());
@@ -17,24 +21,16 @@ async fn test_environment_outside_a_repo() {
     assert!(!env.git_has_staged());
 }
 
-#[tokio::test]
-async fn test_forges_resolve_from_remotes() {
-    let dir = std::env::temp_dir().join("skipper-env-forges");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let git_in = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(&dir)
-            .output()
-            .expect("git available in tests");
-    };
-    git_in(&["init", "-q", "."]);
-    git_in(&["remote", "add", "origin", "ssh://git@192.168.3.20:12222/o/r.git"]);
+#[test]
+fn test_forges_resolve_from_remotes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = temp.path();
+    git(dir, &["init", "-q", "."]);
+    git(dir, &["remote", "add", "origin", "ssh://git@192.168.3.20:12222/o/r.git"]);
 
     // An unmapped self-hosted host enables nothing: this is the case where an
     // installed gh must not surface GitHub tools for a Forgejo checkout.
-    let env = SkipperEnvironment::new(&dir);
+    let env = SkipperEnvironment::with_hosts(dir, ForgeHosts::with_defaults());
     assert!(env.has_git_repo());
     assert!(env.forges().is_empty(), "unmapped host must not enable a forge");
     assert!(env.unknown_hosts().contains("192.168.3.20"));
@@ -45,14 +41,16 @@ async fn test_forges_resolve_from_remotes() {
         "192.168.3.20".to_string(),
         "forgejo".to_string(),
     )]));
-    let env = SkipperEnvironment::with_hosts(&dir, hosts);
-    assert_eq!(env.forges().iter().copied().collect::<Vec<_>>(), vec!["tea"]);
+    let env = SkipperEnvironment::with_hosts(dir, hosts);
+    assert_eq!(env.forges().into_iter().collect::<Vec<_>>(), ["tea"]);
     assert!(env.unknown_hosts().is_empty());
 
-    // A public forge remote needs no configuration.
-    git_in(&["remote", "set-url", "origin", "git@github.com:o/r.git"]);
-    let env = SkipperEnvironment::new(&dir);
-    assert_eq!(env.forges().iter().copied().collect::<Vec<_>>(), vec!["github"]);
-
-    let _ = std::fs::remove_dir_all(&dir);
+    // A public forge remote needs no configuration, and a refresh sees a
+    // switched URL with its current remote.
+    git(dir, &["remote", "set-url", "origin", "git@github.com:o/r.git"]);
+    assert!(env.refresh());
+    assert!(!env.has_forge("tea"));
+    let env = SkipperEnvironment::with_hosts(dir, ForgeHosts::with_defaults());
+    assert_eq!(env.forges().into_iter().collect::<Vec<_>>(), ["github"]);
+    assert_eq!(env.current_remote_label().as_deref(), Some("origin (github)"));
 }

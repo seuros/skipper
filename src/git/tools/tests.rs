@@ -2,12 +2,12 @@ mod diff;
 mod inspect;
 mod mutate;
 
-use crate::git::BlameLine;
 use crate::git::CommitTrailer;
 use crate::git::DiffFormat;
 use crate::git::DiffScope;
-use crate::git::FileAtRev;
-use crate::git::ShowEntry;
+use crate::git::blame::BlameLine;
+use crate::git::file::FileAtRev;
+use crate::git::show::ShowEntry;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;

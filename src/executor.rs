@@ -4,8 +4,6 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-
 #[derive(Debug, Clone)]
 pub struct Output {
     pub stdout: String,

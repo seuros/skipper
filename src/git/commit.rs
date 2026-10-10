@@ -25,14 +25,6 @@ pub struct CommitResult {
     pub committed_paths: Vec<String>,
 }
 
-pub fn commit(cwd: &Path, message: &str) -> Result<CommitResult, GitError> {
-    commit_with_trailers(cwd, message, &[])
-}
-
-pub fn amend(cwd: &Path, message: &str) -> Result<CommitResult, GitError> {
-    amend_with_trailers(cwd, message, &[])
-}
-
 pub fn commit_with_trailers(
     cwd: &Path,
     message: &str,

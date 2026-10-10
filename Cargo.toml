@@ -9,7 +9,12 @@ license = "BSD-2-Clause"
 repository = "https://github.com/seuros/skipper"
 keywords = ["mcp", "git", "github", "gitlab", "forgejo"]
 categories = ["development-tools", "command-line-utilities"]
-exclude = ["/tests", "**/tests.rs", "**/tests/"]
+exclude = ["**/tests.rs", "**/tests/"]
+autobins = false
+
+[[bin]]
+name = "skipper-mcp"
+path = "src/main.rs"
 
 [workspace]
 
@@ -48,6 +53,8 @@ tea = []
 [lints.rust]
 unsafe_code = "deny"
 unused_must_use = "warn"
+# A binary: a `pub` item nothing uses is dead code too.
+dead_code_pub_in_binary = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

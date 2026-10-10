@@ -14,44 +14,25 @@ mod status;
 mod sync;
 pub mod tools;
 
-pub use add::AddResult;
 pub use add::add;
-pub use blame::BlameLine;
 pub use blame::blame;
-pub use branch::BranchMutationResult;
 pub use branch::create as create_branch;
 pub use branch::delete as delete_branch;
-pub use commit::CommitResult;
-pub use commit::amend;
 pub use commit::amend_with_trailers;
-pub use commit::commit;
 pub use commit::commit_with_trailers;
-pub use diff::DiffFile;
 pub use diff::DiffFormat;
-pub use diff::DiffReport;
 pub use diff::DiffScope;
-pub use diff::DiffStatus;
-pub use diff::DiffSummary;
-pub use diff::WhitespaceError;
-pub use diff::diff;
-pub use diff::diff_report;
 pub use error::GitError;
-pub use file::FileAtRev;
 pub use file::show_file;
-pub use log::LogEntry;
 pub use log::log;
 pub use remotes::CurrentRemote;
 pub use remotes::RemoteInfo;
 pub use remotes::RemoteSource;
-pub use repo::RepoInfo;
 pub use show::CommitTrailer;
-pub use show::ShowEntry;
 pub use show::commit_id;
 pub use show::show;
-pub use status::FileStatus;
 pub use status::StatusCounts;
 pub use status::StatusInfo;
-pub use sync::PushPlan;
 pub use sync::SyncOutcome;
 pub use sync::fetch;
 pub use sync::plan_push;
@@ -64,14 +45,10 @@ fn open_repo(cwd: &Path) -> Result<gix::Repository, GitError> {
     gix::discover(cwd).map_err(|e| GitError::NotARepo(e.to_string()))
 }
 
-pub fn repo_info(cwd: &Path) -> Result<RepoInfo, GitError> {
-    repo::info(cwd)
-}
-
-/// [`repo_info`] and every remote, from one open of the repository.
+/// The repository's identity and every remote, from one open of it.
 pub fn repo_info_with_remotes(
     cwd: &Path,
-) -> Result<(RepoInfo, std::collections::BTreeMap<String, String>), GitError> {
+) -> Result<(repo::RepoInfo, std::collections::BTreeMap<String, String>), GitError> {
     repo::info_with_remotes(cwd)
 }
 

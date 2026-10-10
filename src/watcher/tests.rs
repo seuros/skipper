@@ -52,7 +52,10 @@ async fn test_manager_reports_changes_after_debounce() {
 #[tokio::test]
 async fn test_remote_watcher_reports_current_remote_switch() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let env = Arc::new(crate::environment::SkipperEnvironment::new(temp.path()));
+    let env = Arc::new(crate::environment::SkipperEnvironment::with_hosts(
+        temp.path(),
+        crate::remote::ForgeHosts::with_defaults(),
+    ));
     let watcher = RemoteWatcher::new(env);
     let state = |current: &str| WatcherState::Forges {
         has_repo: true,

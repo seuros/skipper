@@ -15,7 +15,7 @@ fn pr(state: &str, draft: bool, mergeable: &str) -> PrOverview {
         review: None,
         merge_methods: vec!["squash", "rebase"],
         default_method: "rebase".into(),
-        checks: crate::provider::github::CheckVerdict::of(Vec::new()),
+        checks: crate::provider::github::pulls::CheckVerdict::of(Vec::new()),
         labels: vec![],
         additions: 0,
         deletions: 0,
