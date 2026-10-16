@@ -1,8 +1,7 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, cli_error, mcp_tool,
 };
 use crate::pr_watch::{EventKind, EventKinds, PrEvent, PrSnapshot};
-use mcp_host::prelude::structured;
 use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,7 +42,11 @@ impl SkipperServer {
         open_world = true,
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:github\")).unwrap_or(false)"
     )]
-    async fn pr_watch(&self, _ctx: Ctx<'_>, params: Parameters<PrWatchParams>) -> ToolResult {
+    async fn pr_watch(
+        &self,
+        _ctx: Ctx<'_>,
+        params: Parameters<PrWatchParams>,
+    ) -> Result<PrWatchResult, ToolError> {
         self.require_github()?;
 
         let until = params.0.until.map_or(EventKinds::ALL, EventKinds::from_iter);
@@ -54,7 +57,7 @@ impl SkipperServer {
             .map_err(cli_error)?;
 
         let Some(blocker) = self.pr_watcher.try_block() else {
-            return structured(PrWatchResult {
+            return Ok(PrWatchResult {
                 pr,
                 blocked: false,
                 events: Vec::new(),
@@ -67,7 +70,7 @@ impl SkipperServer {
         let (events, timed_out) = blocker.wait(wait).await;
         drop(blocker);
 
-        structured(PrWatchResult {
+        Ok(PrWatchResult {
             pr,
             blocked: true,
             events,

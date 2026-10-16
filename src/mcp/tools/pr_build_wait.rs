@@ -1,8 +1,7 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolResult, cli_error, mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, cli_error, mcp_tool,
 };
 use crate::provider::github::{CheckCounts, PrCheck};
-use mcp_host::prelude::structured;
 use serde::Serialize;
 use std::time::Duration;
 
@@ -68,7 +67,7 @@ impl SkipperServer {
         &self,
         _ctx: Ctx<'_>,
         params: Parameters<PrBuildWaitParams>,
-    ) -> ToolResult {
+    ) -> Result<PrBuildResult, ToolError> {
         self.require_github()?;
 
         let (gh, repo, pr) = self.locate_pr(params.0.repo.as_deref(), params.0.pr).await?;
@@ -78,6 +77,6 @@ impl SkipperServer {
 
         let watch =
             gh.pr_checks_watch(&repo, pr, fail_fast, timeout, interval).await.map_err(cli_error)?;
-        structured(PrBuildResult::from_checks(watch.checks, watch.timed_out))
+        Ok(PrBuildResult::from_checks(watch.checks, watch.timed_out))
     }
 }

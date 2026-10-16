@@ -1,9 +1,7 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, cli_error, mcp_tool,
 };
 use crate::provider::BuildRun;
-use mcp_host::prelude::structured;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -54,7 +52,11 @@ impl SkipperServer {
         open_world = true,
         visible = "ctx.environment.map(|e| e.has_git_repo() && (e.has_custom(\"forge:github\") || e.has_custom(\"forge:gitlab\"))).unwrap_or(false)"
     )]
-    async fn build_watch(&self, _ctx: Ctx<'_>, params: Parameters<BuildWatchParams>) -> ToolResult {
+    async fn build_watch(
+        &self,
+        _ctx: Ctx<'_>,
+        params: Parameters<BuildWatchParams>,
+    ) -> Result<BuildWatchResult, ToolError> {
         let params = params.0;
         let provider = self.ci_provider(params.provider.as_deref())?;
         let wait = Duration::from_secs(params.wait_secs.unwrap_or(60).clamp(10, 300));
@@ -75,7 +77,7 @@ impl SkipperServer {
             .await
             .map_err(cli_error)?;
         if initial.is_terminal() {
-            return structured(BuildWatchResult::run(initial, false, 0));
+            return Ok(BuildWatchResult::run(initial, false, 0));
         }
 
         let start = Instant::now();
@@ -94,7 +96,7 @@ impl SkipperServer {
         }
 
         let changed = current.status != initial_status;
-        structured(BuildWatchResult::run(current, changed, start.elapsed().as_secs()))
+        Ok(BuildWatchResult::run(current, changed, start.elapsed().as_secs()))
     }
 
     /// Poll every run of `rev`'s commit until all have finished or `wait` ends.
@@ -105,7 +107,7 @@ impl SkipperServer {
         rev: &str,
         wait: Duration,
         interval: Duration,
-    ) -> ToolResult {
+    ) -> Result<BuildWatchResult, ToolError> {
         use crate::environment::Environment as _;
 
         let sha = crate::git::commit_id(self.env.cwd(), rev)
@@ -125,7 +127,7 @@ impl SkipperServer {
         let changed = latest.as_ref().is_some_and(|runs| *runs != initial);
         let runs = latest.unwrap_or(initial);
 
-        structured(BuildWatchResult {
+        Ok(BuildWatchResult {
             run: None,
             changed,
             terminal: all_finished(&runs),

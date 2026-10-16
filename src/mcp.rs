@@ -11,7 +11,6 @@ use crate::provider::Registry;
 use crate::remote::ForgeHosts;
 use crate::watcher::{GitStatusWatcher, RemoteWatcher, WatcherManager};
 use mcp_host::prelude::*;
-use serde_json::{Map, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -59,7 +58,10 @@ impl Environment for McpEnvironment {
 struct RemoteHydrator(Arc<SkipperEnvironment>);
 
 impl CapabilityHydrator for RemoteHydrator {
-    fn hydrate(&self, _ctx: CapabilityHydrationContext) -> CapabilityHydrationFuture<'_> {
+    fn hydrate<'a>(
+        &'a self,
+        _ctx: &'a CapabilityHydrationContext,
+    ) -> CapabilityHydrationFuture<'a> {
         self.0.refresh();
         Box::pin(std::future::ready(Ok(())))
     }
@@ -115,6 +117,7 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
         .with_tasks(true, true)
         .with_circuit_breaker(breaker())
         .with_rate_limit(RATE_LIMIT.0, RATE_LIMIT.1)
+        .map_err(std::io::Error::other)?
         .with_capability_hydrator(RemoteHydrator(env.clone()))
         .with_logging()
         .with_environment(McpEnvironment {
@@ -124,37 +127,35 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
         })
         .build();
 
-    server.register_router(
-        tools::router(),
-        Arc::new(SkipperServer {
-            #[cfg(any(feature = "github", feature = "gitlab"))]
-            registry: registry.clone(),
-            #[cfg(feature = "tea")]
-            cwd: cwd.clone(),
-            env: env.clone(),
-            writes: config.writes,
-            #[cfg(feature = "github")]
-            pr_watcher: crate::pr_watch::PrWatcher::new(env.clone()),
-        }),
-    );
+    server
+        .register_router(
+            tools::router().map_err(std::io::Error::other)?,
+            Arc::new(SkipperServer {
+                #[cfg(any(feature = "github", feature = "gitlab"))]
+                registry: registry.clone(),
+                #[cfg(feature = "tea")]
+                cwd: cwd.clone(),
+                env: env.clone(),
+                writes: config.writes,
+                #[cfg(feature = "github")]
+                pr_watcher: crate::pr_watch::PrWatcher::new(env.clone()),
+            }),
+        )
+        .map_err(std::io::Error::other)?;
 
-    server.register_router(git::router(), Arc::new(crate::git::GitServer));
-
-    let sender = server.notification_sender();
+    server
+        .register_router(git::router(), Arc::new(crate::git::GitServer))
+        .map_err(std::io::Error::other)?;
 
     // A probe that timed out at startup (slow `gh auth status`, flaky network)
     // hides that forge's tools; retry and surface them once it answers.
     if !registry.unreachable().is_empty() {
-        let sender = sender.clone();
+        let broadcaster = server.broadcaster();
         tokio::spawn(async move {
             registry
                 .retry_unreachable(|online| {
                     tracing::info!(providers = ?online, "providers reachable; refreshing tools");
-                    if let Err(e) = sender
-                        .send(JsonRpcNotification::new("notifications/tools/list_changed", None))
-                    {
-                        tracing::warn!(error = %e, "dropped tools/list_changed notification");
-                    }
+                    broadcaster.broadcast(ListChanged::Tools);
                 })
                 .await;
         });
@@ -166,33 +167,28 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
 
     manager.add(Arc::new(RemoteWatcher::new(env)));
 
+    let watcher_server = server.clone();
     tokio::spawn(async move {
         while let Some(n) = rx.recv().await {
-            if n.watcher == RemoteWatcher::NAME
-                && let Err(e) =
-                    sender.send(JsonRpcNotification::new("notifications/tools/list_changed", None))
-            {
-                tracing::warn!(error = %e, "dropped tools/list_changed notification");
-            }
-
-            // Moved, not `json!`: that macro serializes through a reference
-            // and would deep-copy `data`.
-            let params = Map::from_iter([
-                ("level".to_owned(), Value::from("info")),
-                ("logger".to_owned(), Value::from(n.watcher)),
-                ("data".to_owned(), n.data),
-                ("message".to_owned(), Value::String(n.message)),
-            ]);
-            if let Err(e) = sender.send(JsonRpcNotification::new(
-                "notifications/message",
-                Some(Value::Object(params)),
-            )) {
-                tracing::warn!(watcher = n.watcher, error = %e, "dropped watcher notification");
-            }
+            notify_watcher(&watcher_server, &n);
         }
     });
 
     Ok((server, manager))
+}
+
+/// Watchers have no request origin. Send through each session's gated logger,
+/// never the shared notification queue, honoring logging/setLevel as well.
+fn notify_watcher(server: &Server, notification: &crate::watcher::Notification) {
+    if notification.watcher == RemoteWatcher::NAME {
+        server.broadcaster().broadcast(ListChanged::Tools);
+    }
+    for session in server.active_sessions() {
+        server
+            .logger_for_session(session.id())
+            .child(notification.watcher)
+            .info(format!("{}: {}", notification.message, notification.data));
+    }
 }
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -201,3 +197,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     manager.stop();
     result
 }
+
+#[cfg(test)]
+mod tests;

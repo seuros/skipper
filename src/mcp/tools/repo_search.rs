@@ -1,9 +1,7 @@
 use super::{
-    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, ToolResult, cli_error,
-    mcp_tool,
+    Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, cli_error, mcp_tool,
 };
 use crate::provider::forgejo::{ForgejoClient, any_credentials};
-use mcp_host::prelude::structured;
 use serde::Serialize;
 
 #[derive(Deserialize, JsonSchema)]
@@ -36,7 +34,11 @@ impl SkipperServer {
         open_world = true,
         visible = "ctx.environment.map(|e| e.has_git_repo() && e.has_custom(\"forge:tea\")).unwrap_or(false)"
     )]
-    async fn repo_search(&self, _ctx: Ctx<'_>, params: Parameters<RepoSearchParams>) -> ToolResult {
+    async fn repo_search(
+        &self,
+        _ctx: Ctx<'_>,
+        params: Parameters<RepoSearchParams>,
+    ) -> Result<RepoSearchResult, ToolError> {
         let creds = any_credentials().ok_or_else(|| {
             ToolError::Execution(
                 "no Gitea/Forgejo login found; run `tea login add` to store one".to_string(),
@@ -55,6 +57,6 @@ impl SkipperServer {
         let next_page = (u32::try_from(repos.len()) == Ok(limit)).then_some(page + 1);
 
         // `output` declares a schema, so the result must carry structured content.
-        structured(RepoSearchResult { page, limit, count: repos.len(), next_page, repos })
+        Ok(RepoSearchResult { page, limit, count: repos.len(), next_page, repos })
     }
 }
