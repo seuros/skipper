@@ -300,6 +300,8 @@ fn resource_router() -> Result<McpResourceRouter<SkipperServer>, AppsError> {
     Ok(resources)
 }
 
+// Template metadata is fallible only when a template-providing forge is enabled.
+#[cfg_attr(not(any(feature = "github", feature = "tea")), allow(clippy::unnecessary_wraps))]
 fn template_router() -> Result<McpResourceTemplateRouter<SkipperServer>, AppsError> {
     #[allow(unused_mut)]
     let mut templates = McpResourceTemplateRouter::new();
