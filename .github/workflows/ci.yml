@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: seuros/dictator-setup@master
+      - uses: seuros/setup-dictator@master
 
       - name: Dictator
         run: dictator lint .
