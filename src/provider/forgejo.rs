@@ -1,5 +1,6 @@
 use crate::error::{CliError, Result};
 use crate::provider::is_zero;
+use crate::tracing;
 use rama::http::header::{ACCEPT, AUTHORIZATION};
 use rama::http::service::client::HttpClientExt;
 use rama::http::{BodyExtractExt, HeaderValue};

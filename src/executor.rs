@@ -1,4 +1,5 @@
 use crate::error::{CliError, Result};
+use crate::tracing;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;

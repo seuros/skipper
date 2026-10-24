@@ -9,6 +9,7 @@ use crate::config::{Config, WritesConfig};
 use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::provider::Registry;
 use crate::remote::ForgeHosts;
+use crate::tracing;
 use crate::watcher::{GitStatusWatcher, RemoteWatcher, WatcherManager};
 use mcp_host::prelude::*;
 use std::path::Path;

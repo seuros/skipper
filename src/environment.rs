@@ -1,5 +1,6 @@
 use crate::git::{CurrentRemote, GitError};
 use crate::remote::ForgeHosts;
+use crate::tracing;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;

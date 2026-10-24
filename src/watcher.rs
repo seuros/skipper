@@ -1,5 +1,6 @@
 use crate::error::{CliError, Result};
 use crate::provider::BoxFuture;
+use crate::tracing;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;

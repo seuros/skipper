@@ -1,4 +1,5 @@
 use crate::provider::{BoxFuture, Provider};
+use crate::tracing;
 use crate::version::minimum;
 use semver::Version;
 

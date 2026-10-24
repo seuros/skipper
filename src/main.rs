@@ -18,9 +18,12 @@ mod mcp;
 mod pr_watch;
 mod provider;
 mod remote;
+mod tracing;
 mod version;
 mod watcher;
 mod workspace;
+
+use crate::tracing::subscriber as tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

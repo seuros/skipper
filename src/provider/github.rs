@@ -2,6 +2,7 @@ use crate::environment::{Environment as _, SkipperEnvironment};
 use crate::error::{CliError, Result};
 use crate::executor::{self};
 use crate::provider::{BoxFuture, BuildRun, CiTarget, Provider, is_zero, retryable, retrying};
+use crate::tracing;
 use crate::version::minimum;
 use crate::workspace::ForgeRepo;
 use schemars::JsonSchema;

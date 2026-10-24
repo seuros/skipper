@@ -1,3 +1,4 @@
+use crate::tracing;
 use std::collections::{BTreeSet, HashMap};
 
 const DEFAULT_HOSTS: &[(&str, &str)] =

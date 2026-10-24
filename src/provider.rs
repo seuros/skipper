@@ -15,6 +15,7 @@ pub(crate) mod text;
 
 use crate::error::{CliError, Result};
 use crate::executor;
+use crate::tracing;
 use crate::version;
 use chrono_machines::{BackoffStrategy, ExponentialBackoff};
 use semver::Version;

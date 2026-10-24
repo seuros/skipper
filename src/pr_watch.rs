@@ -7,6 +7,7 @@
 
 pub mod github;
 
+use crate::tracing;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
