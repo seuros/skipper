@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/seuros/skipper/compare/skipper-v0.8.0...skipper-v0.8.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **deps:** release mcp-host 0.15.0 upgrade ([c9add89](https://github.com/seuros/skipper/commit/c9add8965d212ecba8ba0b3f2f80740aba35fe8e))
+* **mcp:** migrate to mcp-host 0.12 and gate watcher notifications ([18258a9](https://github.com/seuros/skipper/commit/18258a9834ff058ec432b6123bf1819729b83c00))
+
 ## [0.8.0](https://github.com/seuros/skipper/compare/skipper-v0.7.1...skipper-v0.8.0) (2026-10-10)
 
 
