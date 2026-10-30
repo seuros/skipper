@@ -2603,9 +2603,9 @@ dependencies = [
 
 [[package]]
 name = "mcp-host"
-version = "0.15.0"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79a1ba2d913f7fefee9542fd3f20854619da2c83202a8995ebf7fa97b216d0ac"
+checksum = "e5711013f1499c3d178125b079e58c551fd1f07e3916df03e49b68da7beb6307"
 dependencies = [
  "arc-swap",
  "base64",
@@ -2614,12 +2614,11 @@ dependencies = [
  "chrono-machines 0.9.0",
  "dashmap",
  "fluent-uri",
- "futures",
  "ignore",
  "jiff",
  "mcp-host-macros",
  "parking_lot",
- "regex",
+ "rama",
  "schemars",
  "serde",
  "serde_json",
@@ -2628,15 +2627,14 @@ dependencies = [
  "thiserror",
  "throttle-machines 0.3.1",
  "tokio",
- "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "mcp-host-macros"
-version = "0.15.0"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a95db1c6f1c5a1a673c5403fc2dda7de1583f6a0bf07c097dca7714f15f9c2d0"
+checksum = "9c313a0a2ec1182417db1e2236ec60057f8deb5b71fce891c58ffa5b04d92b3f"
 dependencies = [
  "darling",
  "proc-macro-crate",

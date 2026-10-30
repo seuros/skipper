@@ -144,8 +144,7 @@ pub struct ChecksSummary {
     /// success | failure | cancelled | pending | `no_checks`
     pub conclusion: &'static str,
     pub counts: CheckCounts,
-    // `default` keeps `failed` out of pr_watch's outputSchema `required`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<FailedCheck>,
 }
 
