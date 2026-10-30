@@ -256,7 +256,7 @@ impl SkipperServer {
         uri_template = "skipper://prs/{state}/{author}{?repo}",
         name = "pr_list",
         title = "Recent PRs by state and author",
-        description = "Last 30 GitHub PRs, newest first, state=open|closed|merged|all, author=login|me: remote, repo, prs[pr, title, head, state, merged_at]. repo=remote|owner/name (default: current remote)",
+        description = "Last 30 GitHub PRs, newest first, state=open|closed|merged|all, author=login|me (percent-encode bot brackets: github-actions%5Bbot%5D): remote, repo, prs[pr, title, head, state, merged_at]. repo=remote|owner/name (default: current remote)",
         mime_type = "application/json"
     )]
     pub(crate) async fn pr_list(&self, ctx: Ctx<'_>) -> ResourceResult {
@@ -273,10 +273,7 @@ impl SkipperServer {
             .pr_list(&repo, state, author)
             .await
             .map_err(forge_error)?;
-        json_resource(
-            with_repo(format_args!("skipper://prs/{state}/{author}"), spec),
-            &Source::repo(repo, Prs { prs }),
-        )
+        json_resource(pr_list_uri(state, author, spec), &Source::repo(repo, Prs { prs }))
     }
 
     #[cfg(any(feature = "github", feature = "tea"))]
@@ -402,6 +399,12 @@ fn with_repo(uri: std::fmt::Arguments<'_>, spec: Option<&str>) -> String {
         Some(spec) => format!("{uri}?repo={}", urlencoding::Encoded(spec)),
         None => uri.to_string(),
     }
+}
+
+/// Re-encode the decoded author before putting it back into a resource URI.
+#[cfg(feature = "github")]
+fn pr_list_uri(state: &str, author: &str, spec: Option<&str>) -> String {
+    with_repo(format_args!("skipper://prs/{state}/{}", urlencoding::Encoded(author)), spec)
 }
 
 /// The repo an issue read goes to: `spec`, else the current remote.
@@ -549,3 +552,6 @@ fn pr_param<'a>(ctx: &'a Ctx<'_>) -> std::result::Result<(&'a str, Option<u64>),
 fn parse_number(raw: &str, expected: &str) -> std::result::Result<u64, ResourceError> {
     raw.parse().map_err(|_| ResourceError::InvalidUri(format!("{expected}: {raw}")))
 }
+
+#[cfg(all(test, feature = "github"))]
+mod tests;

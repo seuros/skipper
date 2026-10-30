@@ -209,6 +209,11 @@ scoped by the workspace's remotes rather than your account.
 | `skipper://prs/{state}/{author}` | GitHub | The last 30 PRs in `open`, `closed`, `merged` or `all` state by an author (`me` for the authenticated user): number, state, merge time |
 | `skipper://watch` | GitHub | PRs under `pr_watch`: status, checks, recent and undelivered events |
 
+Percent-encode author names in PR-list URIs. Bot brackets must be `%5B` and
+`%5D`, for example:
+`skipper://prs/open/github-actions%5Bbot%5D?repo=seuros/behavior_machines`.
+The GitHub search still receives the login `github-actions[bot]`.
+
 ### Current remote
 
 Issue resources read from one remote, picked fresh on every read:
