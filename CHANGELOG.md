@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.2](https://github.com/seuros/skipper/compare/skipper-v0.8.1...skipper-v0.8.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp-host to 0.15.2; drop outputSchema workarounds ([b1ef7b7](https://github.com/seuros/skipper/commit/b1ef7b7d6dd53839241c91ffb08c894dc552ff40))
+* keep skipped output fields out of the outputSchema required list ([acf76e9](https://github.com/seuros/skipper/commit/acf76e9109dc1fba4e8fe4a36cc86338011c426f))
+* percent-encode the author in PR-list resource URIs ([941592e](https://github.com/seuros/skipper/commit/941592e1aff8a3bced90e7fec8c5524b48674dc8))
+
 ## [0.8.1](https://github.com/seuros/skipper/compare/skipper-v0.8.0...skipper-v0.8.1) (2026-10-28)
 
 
