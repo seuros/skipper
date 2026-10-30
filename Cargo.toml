@@ -41,6 +41,7 @@ gix = { version = "=0.89.0", features = ["max-performance-safe", "blob-diff", "s
 tempfile = "3.27.0"
 tokio-test = "0.4"
 tokio = { version = "1", features = ["test-util"] }
+jsonschema = { version = "0.60.2", default-features = false }
 
 [features]
 default = ["github", "gitlab", "tea"]

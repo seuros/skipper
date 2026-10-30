@@ -353,6 +353,8 @@ pub struct PrCheck {
 
 /// Checks tallied by bucket; buckets with none are left out.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, JsonSchema)]
+// `default` keeps the skipped buckets out of output schemas' `required`.
+#[serde(default)]
 pub struct CheckCounts {
     #[serde(skip_serializing_if = "is_zero")]
     pub pass: u32,

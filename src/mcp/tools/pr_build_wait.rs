@@ -27,11 +27,12 @@ pub struct PrBuildResult {
     /// True when `timeout_secs` elapsed before the checks finished.
     pub timed_out: bool,
     pub counts: CheckCounts,
+    // `default` keeps skipped fields out of the outputSchema's `required`.
     /// Failed and cancelled checks, with links to their logs.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<PrCheck>,
     /// Names of checks still queued or running.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<String>,
 }
 
