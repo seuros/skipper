@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/seuros/skipper/compare/skipper-v0.8.2...skipper-v0.9.0) (2026-11-01)
+
+
+### Features
+
+* list in the MCP registry ([ba2cd6a](https://github.com/seuros/skipper/commit/ba2cd6a0c92078e0db4f57e091f19c78345190c9))
+* name the binary after the crate ([81a6aa8](https://github.com/seuros/skipper/commit/81a6aa8449dd190bff4778fa7bf9c8ccd1db6d0f))
+
 ## [0.8.2](https://github.com/seuros/skipper/compare/skipper-v0.8.1...skipper-v0.8.2) (2026-10-30)
 
 
