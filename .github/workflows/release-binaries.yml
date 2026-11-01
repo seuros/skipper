@@ -1,7 +1,7 @@
 name: release-binaries
 
 # Asset names are a contract with scripts/install.sh, which resolves
-# skipper-mcp-${tag}-${triple}.tar.gz with the tag keeping its leading "v".
+# skipper-${tag}-${triple}.tar.gz with the tag keeping its leading "v".
 # Changing one side alone breaks the curl-pipe-bash install.
 
 on:
@@ -63,15 +63,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          name="skipper-mcp-${{ inputs.tag }}-${{ matrix.target }}"
-          tar czf "${name}.tar.gz" -C "target/${{ matrix.target }}/release" skipper-mcp
+          name="skipper-${{ inputs.tag }}-${{ matrix.target }}"
+          tar czf "${name}.tar.gz" -C "target/${{ matrix.target }}/release" skipper
           echo "ASSET=${name}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Verify the archive holds the binary at its root
         shell: bash
         run: |
           set -euo pipefail
-          tar tzf "$ASSET" | grep -qx 'skipper-mcp'
+          tar tzf "$ASSET" | grep -qx 'skipper'
           test -s "$ASSET"
           echo "$ASSET -> $(du -h "$ASSET" | cut -f1)"
 

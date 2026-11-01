@@ -1,4 +1,4 @@
-//! skipper-mcp: git and forge operations for an MCP client, over stdio.
+//! skipper: git and forge operations for an MCP client, over stdio.
 
 // Dead code is checked on the full build, the one that ships. A build with
 // some forges left out also leaves out the callers of helpers they share.

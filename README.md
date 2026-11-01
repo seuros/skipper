@@ -148,7 +148,7 @@ Or build it yourself:
 cargo install skipper
 ```
 
-Either way you get the `skipper-mcp` binary. Skipper is a server, not a
+Either way you get the `skipper` binary. Skipper is a server, not a
 library: the crate builds the binary alone. Depend on the MCP tools and
 resources.
 
@@ -159,7 +159,7 @@ Skipper speaks MCP over stdio. Add it to your client config:
 ```json
 {
   "mcpServers": {
-    "skipper": { "command": "skipper-mcp" }
+    "skipper": { "command": "skipper" }
   }
 }
 ```

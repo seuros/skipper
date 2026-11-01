@@ -6,10 +6,10 @@ IFS=$'\n\t'
 #   curl -fsSL https://raw.githubusercontent.com/seuros/skipper/master/scripts/install.sh | bash
 #
 # Asset names are a contract with .github/workflows/release-binaries.yml:
-# skipper-mcp-${tag}-${triple}.tar.gz, binary at the archive root.
+# skipper-${tag}-${triple}.tar.gz, binary at the archive root.
 
 REPO="seuros/skipper"
-BIN="skipper-mcp"
+BIN="skipper"
 DEFAULT_PREFIX="$HOME/.local/bin"
 
 usage() {

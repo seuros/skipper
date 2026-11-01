@@ -13,7 +13,7 @@ exclude = ["**/tests.rs", "**/tests/"]
 autobins = false
 
 [[bin]]
-name = "skipper-mcp"
+name = "skipper"
 path = "src/main.rs"
 
 [workspace]
