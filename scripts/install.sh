@@ -135,7 +135,7 @@ resolve_tag() {
 install_binary() {
   command -v tar >/dev/null 2>&1 || fail "tar is required"
 
-  local tmp asset url
+  local asset url
   tmp=$(mktemp -d 2>/dev/null || mktemp -d -t skipper-install)
   trap 'rm -rf "$tmp"' EXIT
 
