@@ -1,20 +1,21 @@
 name: release-binaries
 
 # Asset names are a contract with scripts/install.sh, which resolves
-# skipper-${tag}-${triple}.tar.gz with the tag keeping its leading "v".
-# Changing one side alone breaks the curl-pipe-bash install.
+# skipper-${version}-${triple}.tar.gz where version is the tag without its
+# skipper- prefix, e.g. v0.9.0. Changing one side alone breaks the
+# curl-pipe-bash install.
 
 on:
   workflow_call:
     inputs:
       tag:
-        description: Release tag to build and upload, e.g. v0.1.0
+        description: Release tag to build and upload, e.g. skipper-v0.9.0
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload, e.g. v0.1.0
+        description: Release tag to build and upload, e.g. skipper-v0.9.0
         required: true
         type: string
 
@@ -61,7 +62,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          name="skipper-${{ inputs.tag }}-${{ matrix.target }}"
+          version="${{ inputs.tag }}"
+          version="${version#skipper-}"
+          name="skipper-${version}-${{ matrix.target }}"
           tar czf "${name}.tar.gz" -C "target/${{ matrix.target }}/release" skipper
           echo "ASSET=${name}.tar.gz" >> "$GITHUB_ENV"
 

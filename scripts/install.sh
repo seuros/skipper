@@ -6,7 +6,8 @@ IFS=$'\n\t'
 #   curl -fsSL https://raw.githubusercontent.com/seuros/skipper/master/scripts/install.sh | bash
 #
 # Asset names are a contract with .github/workflows/release-binaries.yml:
-# skipper-${tag}-${triple}.tar.gz, binary at the archive root.
+# skipper-${version}-${triple}.tar.gz where version is the tag without its
+# skipper- prefix, binary at the archive root.
 
 REPO="seuros/skipper"
 BIN="skipper"
@@ -18,7 +19,7 @@ Usage: install.sh [options]
 
 Options:
   --prefix <dir>    Install into this directory (default: ~/.local/bin)
-  --version <tag>   Install a specific tag, with or without the leading v
+  --version <ver>   Install a specific version, e.g. 0.9.0 or v0.9.0
   -h, --help        Show this help
 
 Environment:
@@ -43,7 +44,7 @@ parse_args() {
         shift
         ;;
       --version)
-        [ "$#" -ge 2 ] || fail "--version requires a tag"
+        [ "$#" -ge 2 ] || fail "--version requires a version"
         VERSION="$2"
         shift
         ;;
@@ -118,7 +119,8 @@ detect_target() {
 
 resolve_tag() {
   if [ -n "$VERSION" ]; then
-    TAG="v${VERSION#v}"
+    VERSION="${VERSION#skipper-}"
+    TAG="skipper-v${VERSION#v}"
     return
   fi
 
@@ -137,10 +139,10 @@ install_binary() {
   tmp=$(mktemp -d 2>/dev/null || mktemp -d -t skipper-install)
   trap 'rm -rf "$tmp"' EXIT
 
-  asset="${BIN}-${TAG}-${TARGET}.tar.gz"
+  asset="${BIN}-${TAG#skipper-}-${TARGET}.tar.gz"
   url="https://github.com/${REPO}/releases/download/${TAG}/${asset}"
 
-  info "skipper ${TAG} for ${PLATFORM}"
+  info "skipper ${TAG#skipper-} for ${PLATFORM}"
   download "$url" "${tmp}/${asset}" || fail "could not download ${url}"
 
   tar xzf "${tmp}/${asset}" -C "$tmp"
