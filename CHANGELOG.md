@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/seuros/skipper/compare/skipper-v0.9.0...skipper-v0.9.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* exit cleanly after a successful install ([1045ff6](https://github.com/seuros/skipper/commit/1045ff61f5e5dea9f5601766fa6b4a5acf5af651))
+* install pinned versions and drop the doubled asset prefix ([9915bbd](https://github.com/seuros/skipper/commit/9915bbd2375f8e20f4ac8342bcd6d49055886f03))
+
 ## [0.9.0](https://github.com/seuros/skipper/compare/skipper-v0.8.2...skipper-v0.9.0) (2026-11-01)
 
 
