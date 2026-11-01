@@ -322,3 +322,5 @@ organizations, transferring ownership, and managing billing. If you genuinely
 need those, the CLIs still have them, and that is exactly the point: they
 live behind one binary your harness can deny, instead of inside a tool
 surface you have to audit.
+
+mcp-name: io.github.seuros/skipper

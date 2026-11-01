@@ -1,0 +1,24 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.seuros/skipper",
+  "title": "Skipper",
+  "description": "Git and forge ops: local git via gitoxide, plus GitHub, GitLab, Gitea and Forgejo",
+  "repository": {
+    "url": "https://github.com/seuros/skipper",
+    "source": "github",
+    "id": "1382415276"
+  },
+  "websiteUrl": "https://github.com/seuros/skipper",
+  "version": "0.8.2",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "skipper",
+      "version": "0.8.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
