@@ -158,11 +158,7 @@ async fn headless_client_can_push_when_writes_are_enabled_and_confirm_is_default
     let writes = WritesConfig { enabled: true, confirm: true };
     let server = Server::builder("skipper-test", "1")
         .with_tools(true)
-        .with_environment(McpEnvironment {
-            env: env.clone(),
-            registry: registry.clone(),
-            writes,
-        })
+        .with_environment(McpEnvironment { env: env.clone(), registry: registry.clone(), writes })
         .build();
     server
         .register_router(

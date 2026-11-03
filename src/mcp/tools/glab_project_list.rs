@@ -33,8 +33,10 @@ impl SkipperServer {
             .await
             .map_err(cli_error)?;
 
-        let projects: serde_json::Value = serde_json::from_str(&output.stdout)
-            .map_err(|error| ToolError::Execution(format!("glab returned invalid JSON: {error}")))?;
+        let projects: serde_json::Value =
+            serde_json::from_str(&output.stdout).map_err(|error| {
+                ToolError::Execution(format!("glab returned invalid JSON: {error}"))
+            })?;
         ToolOutput::structured(serde_json::json!({ "projects": projects }))
             .map_err(|error| ToolError::Internal(format!("structured output failed: {error}")))
     }
