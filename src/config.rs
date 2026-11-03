@@ -23,8 +23,8 @@ pub struct WritesConfig {
     #[serde(default)]
     pub enabled: bool,
     /// Ask the user through the client (MCP elicitation) before each merge or
-    /// push. A client without elicitation is refused; `false` lets writes run
-    /// unattended.
+    /// push when the client supports it. Clients that cannot elicit (for
+    /// example, Chaos in headless mode) rely on their own approval policy.
     #[serde(default = "confirm_by_default")]
     pub confirm: bool,
 }

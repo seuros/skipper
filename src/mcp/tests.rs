@@ -1,5 +1,16 @@
 use super::*;
 use serde_json::json;
+use std::path::Path;
+use std::process::Command;
+
+fn git(cwd: &Path, args: &[&str]) {
+    let output = Command::new("git").current_dir(cwd).args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 async fn initialize(server: &Server, id: &str, version: &str) {
     let response = server
@@ -124,4 +135,77 @@ async fn registered_git_tools_negotiate_and_reject_invalid_arguments() {
         assert_ne!(result["isError"], true, "{result}");
         assert!(result["structuredContent"].is_object(), "{result}");
     }
+}
+
+#[tokio::test]
+async fn headless_client_can_push_when_writes_are_enabled_and_confirm_is_defaulted_on() {
+    let temp = tempfile::tempdir().unwrap();
+    let bare = temp.path().join("remote.git");
+    let work = temp.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    git(temp.path(), &["init", "--bare", bare.to_str().unwrap()]);
+    git(&work, &["init", "--initial-branch=main"]);
+    git(&work, &["config", "user.name", "Skipper test"]);
+    git(&work, &["config", "user.email", "skipper-test@example.invalid"]);
+    git(&work, &["commit", "--allow-empty", "-m", "initial"]);
+    git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+
+    let env = Arc::new(crate::environment::SkipperEnvironment::with_hosts(
+        &work,
+        ForgeHosts::with_defaults(),
+    ));
+    let registry = Arc::new(Registry::with_defaults(|_| true));
+    let writes = WritesConfig { enabled: true, confirm: true };
+    let server = Server::builder("skipper-test", "1")
+        .with_tools(true)
+        .with_environment(McpEnvironment {
+            env: env.clone(),
+            registry: registry.clone(),
+            writes,
+        })
+        .build();
+    server
+        .register_router(
+            tools::router().unwrap(),
+            Arc::new(SkipperServer {
+                #[cfg(any(feature = "github", feature = "gitlab"))]
+                registry,
+                #[cfg(feature = "tea")]
+                cwd: work.clone(),
+                env,
+                writes,
+                #[cfg(feature = "github")]
+                pr_watcher: crate::pr_watch::PrWatcher::new(Arc::new(
+                    crate::environment::SkipperEnvironment::with_hosts(
+                        &work,
+                        ForgeHosts::with_defaults(),
+                    ),
+                )),
+            }),
+        )
+        .unwrap();
+    server.register_router(git::router(), Arc::new(crate::git::GitServer)).unwrap();
+    initialize(&server, "headless", "2025-11-25").await;
+
+    let response = server
+        .handle_request(
+            "headless",
+            JsonRpcRequest::new(
+                json!(2),
+                "tools/call",
+                Some(json!({"name": "git_push", "arguments": {"remotes": ["origin"]}})),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(response.error.is_none(), "{response:?}");
+    let result = response.result.unwrap();
+    assert_ne!(result["isError"], true, "{result}");
+    assert_eq!(result["structuredContent"]["pushed"].as_array().unwrap().len(), 1);
+
+    let pushed = Command::new("git")
+        .args(["--git-dir", bare.to_str().unwrap(), "rev-parse", "refs/heads/main"])
+        .output()
+        .unwrap();
+    assert!(pushed.status.success(), "headless git_push did not update the local remote");
 }

@@ -78,6 +78,7 @@ const fn breaker() -> ToolBreakerConfig {
         half_open_timeout_secs: 30.0,
         success_threshold: 1,
         call_timeout_secs: 120.0,
+        max_concurrent_calls: 64,
     }
 }
 

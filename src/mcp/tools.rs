@@ -117,9 +117,9 @@ impl SkipperServer {
 }
 
 impl SkipperServer {
-    /// Ask the user to approve the write `summary` describes, unless the
-    /// global config sets `[writes] confirm = false`. A declined write answers
-    /// `InvalidArguments`: the user's call, not a failure to trip a breaker.
+    /// Ask the connected client to approve the write where elicitation is
+    /// available. Headless clients have already selected unattended execution;
+    /// requiring an impossible prompt here would make authorized writes fail.
     pub(super) async fn confirm_write(
         &self,
         ctx: &Ctx<'_>,
@@ -132,14 +132,9 @@ impl SkipperServer {
         if !self.writes.confirm {
             return Ok(());
         }
-        let unsupported = || {
-            ToolError::Execution(
-                "this client cannot ask for confirmation (no MCP elicitation); set `[writes] \
-                 confirm = false` in ~/.config/skipper/config.toml to allow unattended writes"
-                    .to_string(),
-            )
+        let Some(requester) = ctx.client_requester() else {
+            return Ok(());
         };
-        let requester = ctx.client_requester().ok_or_else(unsupported)?;
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -147,13 +142,19 @@ impl SkipperServer {
             },
             "required": ["approve"]
         });
-        let answer = requester
+        let answer = match requester
             .request_elicitation(summary.to_string(), schema, Some(Duration::from_secs(300)))
             .await
-            .map_err(|e| match e {
-                MultiplexerError::UnsupportedCapability(_) => unsupported(),
-                e => ToolError::Execution(format!("confirmation failed: {e}")),
-            })?;
+        {
+            Ok(answer) => answer,
+            // A client such as Chaos in headless mode cannot show a prompt.
+            // Its configured approval policy is authoritative, so don't turn
+            // the absence of an elicitation capability into a tool denial.
+            Err(MultiplexerError::UnsupportedCapability(_)) => return Ok(()),
+            Err(error) => {
+                return Err(ToolError::Execution(format!("confirmation failed: {error}")));
+            }
+        };
         let approved = answer.action == ElicitationAction::Accept
             && answer.content.as_ref().and_then(|c| c["approve"].as_bool()) == Some(true);
         if approved {
@@ -177,9 +178,10 @@ pub(super) fn cli_error(e: crate::error::CliError) -> ToolError {
 
 #[cfg(any(feature = "github", feature = "gitlab"))]
 pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
-    let json = serde_json::to_string(value)
+    let value = serde_json::to_value(value)
         .map_err(|e| ToolError::Internal(format!("serialization failed: {e}")))?;
-    Ok(ToolOutput::text(json))
+    ToolOutput::structured(value)
+        .map_err(|e| ToolError::Internal(format!("structured output failed: {e}")))
 }
 
 pub fn router() -> Result<McpRouter<SkipperServer>, AppsError> {

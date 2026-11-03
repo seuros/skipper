@@ -1,6 +1,6 @@
 [package]
 name = "skipper"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.99"
 authors = ["Abdelkader Boudih"]
@@ -25,7 +25,7 @@ serde_json = "1"
 toml = "1.1"
 semver = "1"
 thiserror = "2"
-mcp-host = { version = "0.15.2", features = ["macros"] }
+mcp-host = { version = "0.19", features = ["macros"] }
 schemars = "1.2.2"
 jiff = { version = "0.2", features = ["serde"] }
 urlencoding = "2"
