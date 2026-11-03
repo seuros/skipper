@@ -184,7 +184,7 @@ where
         .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
         .await
         .map(RetryOutcome::into_inner)
-        .map_err(|e| e.into_cause().expect("a failed retry carries its last error"))
+        .map_err(|e| e.into_cause())
 }
 
 /// The network dropped, or the forge answered 5xx: a repeat may get through.

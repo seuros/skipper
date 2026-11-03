@@ -208,7 +208,7 @@ async fn run(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome, Git
         .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
         .await
         .map(RetryOutcome::into_inner)
-        .map_err(|e| e.into_cause().expect("a failed retry carries its last error"));
+        .map_err(|e| e.into_cause());
     match result {
         Ok(outcome) | Err(Attempt::Transient(outcome)) => Ok(outcome),
         Err(Attempt::Failed(e)) => Err(e),
