@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/seuros/skipper/compare/skipper-v0.9.1...skipper-v0.10.0) (2026-11-03)
+
+
+### Features
+
+* add structured MCP tool results and headless push support ([741f512](https://github.com/seuros/skipper/commit/741f5128938d87b618028377532c71a78640a795))
+
+
+### Bug Fixes
+
+* satisfy clippy with MCP host 0.19 ([0478c6d](https://github.com/seuros/skipper/commit/0478c6dc9d078b7d5ec35a4bcff7b0c77ce73e2f))
+
 ## [0.9.1](https://github.com/seuros/skipper/compare/skipper-v0.9.0...skipper-v0.9.1) (2026-11-01)
 
 
