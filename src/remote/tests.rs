@@ -5,6 +5,10 @@ fn test_host_of_url_shapes() {
     assert_eq!(host_of("https://github.com/seuros/repo.git").as_deref(), Some("github.com"));
     assert_eq!(host_of("git@github.com:seuros/repo.git").as_deref(), Some("github.com"));
     assert_eq!(
+        host_of("ssh://git@ssh.github.com:443/seuros/repo.git").as_deref(),
+        Some("github.com")
+    );
+    assert_eq!(
         host_of("ssh://git@192.168.3.20:12222/seuros/skipper.git").as_deref(),
         Some("192.168.3.20")
     );
@@ -61,6 +65,7 @@ fn test_normalize_provider_aliases() {
 fn test_default_hosts() {
     let hosts = ForgeHosts::with_defaults();
     assert_eq!(hosts.provider_for_url("git@github.com:o/r.git"), Some("github"));
+    assert_eq!(hosts.provider_for_url("ssh://git@ssh.github.com:443/o/r.git"), Some("github"));
     assert_eq!(hosts.provider_for_url("https://gitlab.com/g/p"), Some("gitlab"));
     assert_eq!(hosts.provider_for_url("https://codeberg.org/o/r"), Some("tea"));
     assert_eq!(hosts.provider_for_url("ssh://git@192.168.3.20:12222/o/r.git"), None);
