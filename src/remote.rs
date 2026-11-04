@@ -44,8 +44,13 @@ pub fn host_of(url: &str) -> Option<String> {
         authority
     };
 
-    let host = host.trim().trim_end_matches('.');
-    if host.is_empty() { None } else { Some(host.to_lowercase()) }
+    let host = host.trim().trim_end_matches('.').to_lowercase();
+    match host.as_str() {
+        "" => None,
+        // GitHub's SSH-over-443 clone endpoint is not its API hostname.
+        "ssh.github.com" => Some("github.com".to_string()),
+        _ => Some(host),
+    }
 }
 
 /// Strip userinfo from scheme URLs, where tokens get embedded

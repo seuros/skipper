@@ -49,3 +49,19 @@ fn test_forges_resolve_from_remotes() {
     assert_eq!(env.forges().into_iter().collect::<Vec<_>>(), ["github"]);
     assert_eq!(env.current_remote_label().as_deref(), Some("origin (github)"));
 }
+
+#[test]
+fn test_github_ssh_over_https_resolves_to_the_api_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir = temp.path();
+    git(dir, &["init", "-q", "."]);
+    git(dir, &["remote", "add", "origin", "ssh://git@ssh.github.com:443/seuros/skipper.git"]);
+
+    let env = SkipperEnvironment::with_hosts(dir, ForgeHosts::with_defaults());
+    assert_eq!(env.forges().into_iter().collect::<Vec<_>>(), ["github"]);
+
+    let repo = crate::workspace::forge_repo_on(&env, "github").expect("GitHub remote");
+    assert_eq!(repo.host, "github.com");
+    assert_eq!(repo.owner, "seuros");
+    assert_eq!(repo.name, "skipper");
+}
