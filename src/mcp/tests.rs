@@ -1,5 +1,6 @@
 use super::*;
 use mcp_host::prelude::ClientRequester;
+use mcp_host::protocol::capabilities::ServerCapabilities;
 use mcp_host::protocol::version::ProtocolVersion;
 use mcp_host::server::multiplexer::RequestMultiplexer;
 use mcp_host::server::session::Session as McpSession;
@@ -219,7 +220,7 @@ async fn write_confirmation_skips_clients_without_elicitation_support() {
         serde_json::from_value(json!({"name": "headless", "version": "1"})).unwrap(),
         serde_json::from_value(json!({})).unwrap(),
         ProtocolVersion::V2025_11_25,
-        Default::default(),
+        ServerCapabilities::default(),
     ));
     assert!(session.mark_ready());
     let (tx, mut rx) = mpsc::channel(1);
