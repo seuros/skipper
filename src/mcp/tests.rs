@@ -1,7 +1,14 @@
 use super::*;
+use mcp_host::prelude::ClientRequester;
+use mcp_host::protocol::capabilities::ServerCapabilities;
+use mcp_host::protocol::version::ProtocolVersion;
+use mcp_host::server::multiplexer::RequestMultiplexer;
+use mcp_host::server::session::Session as McpSession;
 use serde_json::json;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 fn git(cwd: &Path, args: &[&str]) {
     let output = Command::new("git").current_dir(cwd).args(args).output().unwrap();
@@ -138,7 +145,7 @@ async fn registered_git_tools_negotiate_and_reject_invalid_arguments() {
 }
 
 #[tokio::test]
-async fn headless_client_can_push_when_writes_are_enabled_and_confirm_is_defaulted_on() {
+async fn client_without_elicitation_can_push_when_writes_are_enabled_and_confirm_is_defaulted_on() {
     let temp = tempfile::tempdir().unwrap();
     let bare = temp.path().join("remote.git");
     let work = temp.path().join("work");
@@ -204,4 +211,22 @@ async fn headless_client_can_push_when_writes_are_enabled_and_confirm_is_default
         .output()
         .unwrap();
     assert!(pushed.status.success(), "headless git_push did not update the local remote");
+}
+
+#[tokio::test]
+async fn write_confirmation_skips_clients_without_elicitation_support() {
+    let session = Arc::new(McpSession::with_id("headless"));
+    assert!(session.initialize(
+        serde_json::from_value(json!({"name": "headless", "version": "1"})).unwrap(),
+        serde_json::from_value(json!({})).unwrap(),
+        ProtocolVersion::V2025_11_25,
+        ServerCapabilities::default(),
+    ));
+    assert!(session.mark_ready());
+    let (tx, mut rx) = mpsc::channel(1);
+    let requester = ClientRequester::new(tx, Arc::new(RequestMultiplexer::new()), session);
+
+    assert!(!requester.supports_elicitation());
+    tools::request_write_confirmation(&requester, "push master to github").await.unwrap();
+    assert!(rx.try_recv().is_err());
 }
