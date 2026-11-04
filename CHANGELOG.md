@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.1](https://github.com/seuros/skipper/compare/skipper-v0.10.0...skipper-v0.10.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **git:** normalize GitHub SSH-over-443 host ([d8035d9](https://github.com/seuros/skipper/commit/d8035d90bd0b1c46fb5e6b31b5939fc05cc4ac5a))
+* **git:** normalize GitHub SSH-over-443 host ([9b54379](https://github.com/seuros/skipper/commit/9b5437935825dfbf40f969365ec32c23dfe3bb10))
+* **mcp:** skip elicitation for headless clients ([ce42706](https://github.com/seuros/skipper/commit/ce42706c22f163311923ea7d8bb750c3b23512f9))
+* **mcp:** skip elicitation when client does not support it ([bc6fcf4](https://github.com/seuros/skipper/commit/bc6fcf4e036879fb2aaee2bc1e72dd637c831c16))
+* **test:** make server capabilities explicit ([60f4b57](https://github.com/seuros/skipper/commit/60f4b57cabf9327817ea8a19227a35c2ec58474b))
+
 ## [0.10.0](https://github.com/seuros/skipper/compare/skipper-v0.9.1...skipper-v0.10.0) (2026-11-03)
 
 
