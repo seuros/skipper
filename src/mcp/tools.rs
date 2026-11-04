@@ -125,43 +125,53 @@ impl SkipperServer {
         ctx: &Ctx<'_>,
         summary: &str,
     ) -> Result<(), ToolError> {
-        use mcp_host::prelude::MultiplexerError;
-        use mcp_host::protocol::types::ElicitationAction;
-        use std::time::Duration;
-
         if !self.writes.confirm {
             return Ok(());
         }
         let Some(requester) = ctx.client_requester() else {
             return Ok(());
         };
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "approve": { "type": "boolean", "title": "Approve", "description": summary }
-            },
-            "required": ["approve"]
-        });
-        let answer = match requester
-            .request_elicitation(summary.to_string(), schema, Some(Duration::from_secs(300)))
-            .await
-        {
-            Ok(answer) => answer,
-            // A client such as Chaos in headless mode cannot show a prompt.
-            // Its configured approval policy is authoritative, so don't turn
-            // the absence of an elicitation capability into a tool denial.
-            Err(MultiplexerError::UnsupportedCapability(_)) => return Ok(()),
-            Err(error) => {
-                return Err(ToolError::Execution(format!("confirmation failed: {error}")));
-            }
-        };
-        let approved = answer.action == ElicitationAction::Accept
-            && answer.content.as_ref().and_then(|c| c["approve"].as_bool()) == Some(true);
-        if approved {
-            Ok(())
-        } else {
-            Err(ToolError::InvalidArguments(format!("declined by the user: {summary}")))
+        request_write_confirmation(requester, summary).await
+    }
+}
+
+pub(super) async fn request_write_confirmation(
+    requester: &ClientRequester,
+    summary: &str,
+) -> Result<(), ToolError> {
+    use mcp_host::prelude::MultiplexerError;
+    use mcp_host::protocol::types::ElicitationAction;
+    use std::time::Duration;
+
+    if !requester.supports_elicitation() {
+        return Ok(());
+    }
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "approve": { "type": "boolean", "title": "Approve", "description": summary }
+        },
+        "required": ["approve"]
+    });
+    let answer = match requester
+        .request_elicitation(summary.to_string(), schema, Some(Duration::from_secs(300)))
+        .await
+    {
+        Ok(answer) => answer,
+        // A client such as Chaos in headless mode cannot show a prompt.
+        // Its configured approval policy is authoritative, so don't turn
+        // the absence of an elicitation capability into a tool denial.
+        Err(MultiplexerError::UnsupportedCapability(_)) => return Ok(()),
+        Err(error) => {
+            return Err(ToolError::Execution(format!("confirmation failed: {error}")));
         }
+    };
+    let approved = answer.action == ElicitationAction::Accept
+        && answer.content.as_ref().and_then(|c| c["approve"].as_bool()) == Some(true);
+    if approved {
+        Ok(())
+    } else {
+        Err(ToolError::InvalidArguments(format!("declined by the user: {summary}")))
     }
 }
 
