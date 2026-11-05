@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2](https://github.com/seuros/skipper/compare/skipper-v0.10.1...skipper-v0.10.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* update MCP host dependency to 0.20 ([8cd38fc](https://github.com/seuros/skipper/commit/8cd38fce85ff6ea965e61fb6aba8991fdf643c74))
+
 ## [0.10.1](https://github.com/seuros/skipper/compare/skipper-v0.10.0...skipper-v0.10.1) (2026-11-04)
 
 
