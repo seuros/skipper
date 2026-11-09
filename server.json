@@ -9,13 +9,13 @@
     "id": "1382415276"
   },
   "websiteUrl": "https://github.com/seuros/skipper",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "packages": [
     {
       "registryType": "cargo",
       "registryBaseUrl": "https://crates.io",
       "identifier": "skipper",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "transport": {
         "type": "stdio"
       }

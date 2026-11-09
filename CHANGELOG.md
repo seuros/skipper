@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.3](https://github.com/seuros/skipper/compare/skipper-v0.10.2...skipper-v0.10.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **deps:** bump mcp-host 0.23, chrono-machines 0.11, throttle-machines 0.5, gix 0.90 ([08c7f67](https://github.com/seuros/skipper/commit/08c7f677d1611142cd3e56457019a29f3edffdb8))
+* stop the git_diff worker when its call is cancelled ([2c16a50](https://github.com/seuros/skipper/commit/2c16a5087a51279d208815a39558b5a7c43710d4))
+
 ## [0.10.2](https://github.com/seuros/skipper/compare/skipper-v0.10.1...skipper-v0.10.2) (2026-11-05)
 
 
