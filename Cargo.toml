@@ -22,26 +22,26 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["process", "macros", "rt-multi-thread", "time", "sync", "signal"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-toml = "1.1"
+toml = "1.2"
 semver = "1"
 thiserror = "2"
-mcp-host = { version = "0.20", features = ["macros"] }
-schemars = "1.2.2"
+mcp-host = { version = "0.23", features = ["macros"] }
+schemars = "1.2.3"
 jiff = { version = "0.2", features = ["serde"] }
 urlencoding = "2"
 rama = { version = "0.4.0", default-features = false, features = ["std", "http", "tcp", "rustls", "ring", "tls", "http-backend", "dns"] }
 serde_yaml_ng = "0.10"
-similar = "3.2.0"
+similar = "3.2.1"
 url = "2.5.8"
-chrono-machines = { version = "0.10", features = ["async"] }
+chrono-machines = { version = "0.11", features = ["async"] }
 throttle-machines = "0.5"
-gix = { version = "=0.89.0", features = ["max-performance-safe", "blob-diff", "status", "revision", "blame", "command"] }
+gix = { version = "=0.90.0", features = ["max-performance", "blob-diff", "status", "revision", "blame", "command"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
 tokio-test = "0.4"
 tokio = { version = "1", features = ["test-util"] }
-jsonschema = { version = "0.60.2", default-features = false }
+jsonschema = { version = "0.61.0", default-features = false }
 
 [features]
 default = ["github", "gitlab", "tea"]

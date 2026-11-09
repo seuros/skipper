@@ -70,7 +70,9 @@ impl CapabilityHydrator for RemoteHydrator {
 
 /// Forge tools fail fast while the forge is down: three upstream failures in a
 /// minute open a tool's breaker for 30s. Caller errors (bad ref, no PR for the
-/// branch) answer `InvalidArguments` and never count.
+/// branch) answer `InvalidArguments` and never count. Calls past the adaptive
+/// in-flight limit queue for a slot rather than fail; `RATE_LIMIT` is the
+/// tighter bound in practice.
 const fn breaker() -> ToolBreakerConfig {
     ToolBreakerConfig {
         failure_threshold: 3,
@@ -79,6 +81,7 @@ const fn breaker() -> ToolBreakerConfig {
         success_threshold: 1,
         call_timeout_secs: 120.0,
         max_concurrent_calls: 64,
+        max_queued_calls: 256,
     }
 }
 
