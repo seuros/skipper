@@ -64,6 +64,17 @@ where
         .map_err(|e| GitToolError::Failed(format!("git tool task failed: {e}")))?
 }
 
+/// Raises the worker's cancel flag when the awaiting future goes away. mcp-host
+/// drops a cancelled or timed-out call's future, which stops async work but
+/// not a `spawn_blocking` worker; gix polls this flag to interrupt.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 async fn execute_cancellable_blocking<P, F, R>(
     cwd: PathBuf,
     params: P,
@@ -76,8 +87,8 @@ where
     F: FnOnce(&Path, P, &Arc<AtomicBool>) -> Result<R, GitToolError> + Send + 'static,
     R: Send + 'static,
 {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let worker_cancel = Arc::clone(&cancel);
+    let cancel = CancelOnDrop(Arc::new(AtomicBool::new(false)));
+    let worker_cancel = Arc::clone(&cancel.0);
     let mut task = tokio::task::spawn_blocking(move || f(&cwd, params, &worker_cancel));
     tokio::select! {
         biased;
@@ -85,7 +96,7 @@ where
             result.map_err(|e| GitToolError::Failed(format!("{operation} task failed: {e}")))?
         }
         () = tokio::time::sleep(timeout) => {
-            cancel.store(true, Ordering::Release);
+            cancel.0.store(true, Ordering::Release);
             let _worker_result = task.await.map_err(|e| {
                 GitToolError::Failed(format!(
                     "{operation} timed out after {timeout:?}; worker cleanup failed: {e}"

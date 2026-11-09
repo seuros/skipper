@@ -132,3 +132,35 @@ fn cancellable_blocking_waits_for_worker_shutdown_after_timeout() {
     );
     assert!(stopped.load(Ordering::Acquire), "timeout must not leave blocking work running");
 }
+
+#[test]
+fn cancellable_blocking_stops_worker_when_call_is_dropped() {
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_time().build().expect("runtime");
+    let stopped = Arc::new(AtomicBool::new(false));
+    let worker_stopped = Arc::clone(&stopped);
+
+    // mcp-host drops a cancelled call's future; skipper's own timeout never fires.
+    let call = execute_cancellable_blocking(
+        PathBuf::from("."),
+        (),
+        Duration::from_secs(3600),
+        "test operation",
+        move |_, (), cancel| {
+            // Bounded, so a regression fails instead of hanging the runtime's drop.
+            let give_up = std::time::Instant::now() + Duration::from_secs(5);
+            while !cancel.load(Ordering::Acquire) && std::time::Instant::now() < give_up {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            worker_stopped.store(cancel.load(Ordering::Acquire), Ordering::Release);
+            Ok::<(), GitToolError>(())
+        },
+    );
+    let dropped =
+        runtime.block_on(async { tokio::time::timeout(Duration::from_millis(20), call).await });
+    assert!(dropped.is_err(), "the call must still be running when dropped");
+    // Dropping the runtime joins the blocking worker.
+    drop(runtime);
+
+    assert!(stopped.load(Ordering::Acquire), "dropping the call must stop its blocking worker");
+}
