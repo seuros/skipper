@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.4](https://github.com/seuros/skipper/compare/skipper-v0.10.3...skipper-v0.10.4) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deps:** move to mcp-host 0.27, chrono-machines 0.13, throttle-machines 0.6, deadline-machines 0.5 ([dcc1b90](https://github.com/seuros/skipper/commit/dcc1b90ef40355048278369bb0031f7733a6aa8e))
+
 ## [0.10.3](https://github.com/seuros/skipper/compare/skipper-v0.10.2...skipper-v0.10.3) (2026-11-09)
 
 
