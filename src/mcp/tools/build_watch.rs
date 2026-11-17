@@ -2,9 +2,10 @@ use super::{
     Ctx, Deserialize, JsonSchema, Parameters, SkipperServer, ToolError, cli_error, mcp_tool,
 };
 use crate::provider::BuildRun;
+use deadline_machines::Deadline;
+use deadline_machines::tokio_support::TokioClock;
 use serde::Serialize;
 use std::time::Duration;
-use tokio::time::Instant;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct BuildWatchParams {
@@ -80,13 +81,12 @@ impl SkipperServer {
             return Ok(BuildWatchResult::run(initial, false, 0));
         }
 
-        let start = Instant::now();
-        let deadline = start + wait;
+        let clock = TokioClock::new();
+        let deadline = Deadline::after(clock.now(), wait);
         let initial_status = initial.status;
         let mut current = initial;
-        while Instant::now() < deadline {
-            let remaining = deadline - Instant::now();
-            tokio::time::sleep(interval.min(remaining)).await;
+        while !deadline.is_expired(clock.now()) {
+            tokio::time::sleep(deadline.clamp_sleep(clock.now(), interval)).await;
 
             current =
                 provider.ci_run(&self.env, &target, Some(&current.id)).await.map_err(cli_error)?;
@@ -96,7 +96,7 @@ impl SkipperServer {
         }
 
         let changed = current.status != initial_status;
-        Ok(BuildWatchResult::run(current, changed, start.elapsed().as_secs()))
+        Ok(BuildWatchResult::run(current, changed, clock.now().as_secs()))
     }
 
     /// Poll every run of `rev`'s commit until all have finished or `wait` ends.
@@ -112,16 +112,17 @@ impl SkipperServer {
 
         let sha = crate::git::commit_id(self.env.cwd(), rev)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
-        let start = Instant::now();
-        let deadline = start + wait;
+        let clock = TokioClock::new();
+        let deadline = Deadline::after(clock.now(), wait);
 
         let target = provider.ci_target(&self.env).map_err(cli_error)?;
         let initial = provider.ci_runs_for_commit(&target, &sha).await.map_err(cli_error)?;
         // Polled runs, kept apart from `initial` to tell whether they moved.
         let mut latest: Option<Vec<BuildRun>> = None;
-        while !all_finished(latest.as_deref().unwrap_or(&initial)) && Instant::now() < deadline {
-            let remaining = deadline - Instant::now();
-            tokio::time::sleep(interval.min(remaining)).await;
+        while !all_finished(latest.as_deref().unwrap_or(&initial))
+            && !deadline.is_expired(clock.now())
+        {
+            tokio::time::sleep(deadline.clamp_sleep(clock.now(), interval)).await;
             latest = Some(provider.ci_runs_for_commit(&target, &sha).await.map_err(cli_error)?);
         }
         let changed = latest.as_ref().is_some_and(|runs| *runs != initial);
@@ -134,7 +135,7 @@ impl SkipperServer {
             conclusion: Some(crate::provider::conclusion_of(&runs)),
             commit: Some(sha),
             runs: Some(runs),
-            waited_secs: start.elapsed().as_secs(),
+            waited_secs: clock.now().as_secs(),
         })
     }
 }

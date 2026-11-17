@@ -11,9 +11,12 @@ use crate::provider::Registry;
 use crate::remote::ForgeHosts;
 use crate::tracing;
 use crate::watcher::{GitStatusWatcher, RemoteWatcher, WatcherManager};
+use mcp_host::breaker_machines::{Policy, Recovery, Threshold};
 use mcp_host::prelude::*;
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 pub struct McpEnvironment {
@@ -68,6 +71,22 @@ impl CapabilityHydrator for RemoteHydrator {
     }
 }
 
+const BREAKER_POLICY: Policy = match Policy::new(
+    match Threshold::new(NonZeroU32::new(3), None, 0) {
+        Some(threshold) => threshold,
+        None => panic!("breaker: three failures is a valid threshold"),
+    },
+    Duration::from_secs(60),
+    match Recovery::new(Duration::from_secs(30), 0.0, NonZeroU32::MIN, NonZeroU32::MIN) {
+        Some(recovery) => recovery,
+        None => panic!("breaker: an unjittered 30s cooldown is a valid recovery"),
+    },
+    None,
+) {
+    Some(policy) => policy,
+    None => panic!("breaker: a minute is a valid failure window"),
+};
+
 /// Forge tools fail fast while the forge is down: three upstream failures in a
 /// minute open a tool's breaker for 30s. Caller errors (bad ref, no PR for the
 /// branch) answer `InvalidArguments` and never count. Calls past the adaptive
@@ -75,10 +94,7 @@ impl CapabilityHydrator for RemoteHydrator {
 /// tighter bound in practice.
 const fn breaker() -> ToolBreakerConfig {
     ToolBreakerConfig {
-        failure_threshold: 3,
-        failure_window_secs: 60.0,
-        half_open_timeout_secs: 30.0,
-        success_threshold: 1,
+        policy: BREAKER_POLICY,
         call_timeout_secs: 120.0,
         max_concurrent_calls: 64,
         max_queued_calls: 256,
@@ -134,7 +150,7 @@ pub async fn build_server() -> std::io::Result<(Server, Arc<WatcherManager>)> {
 
     server
         .register_router(
-            tools::router().map_err(std::io::Error::other)?,
+            tools::router(),
             Arc::new(SkipperServer {
                 #[cfg(any(feature = "github", feature = "gitlab"))]
                 registry: registry.clone(),

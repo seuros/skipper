@@ -194,13 +194,9 @@ pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
         .map_err(|e| ToolError::Internal(format!("structured output failed: {e}")))
 }
 
-pub fn router() -> Result<McpRouter<SkipperServer>, AppsError> {
-    Ok(McpRouter::new(
-        tool_router(),
-        McpPromptRouter::new(),
-        resource_router()?,
-        template_router()?,
-    ))
+#[must_use]
+pub fn router() -> McpRouter<SkipperServer> {
+    McpRouter::new(tool_router(), McpPromptRouter::new(), resource_router(), template_router())
 }
 
 fn tool_router() -> McpToolRouter<SkipperServer> {
@@ -283,10 +279,10 @@ fn tool_router() -> McpToolRouter<SkipperServer> {
     tools
 }
 
-fn resource_router() -> Result<McpResourceRouter<SkipperServer>, AppsError> {
+fn resource_router() -> McpResourceRouter<SkipperServer> {
     #[allow(unused_mut)]
     let mut resources = McpResourceRouter::new().with_resource(
-        SkipperServer::workspace_resource_info()?,
+        SkipperServer::workspace_resource_info(),
         SkipperServer::workspace_handler,
         None,
     );
@@ -294,7 +290,7 @@ fn resource_router() -> Result<McpResourceRouter<SkipperServer>, AppsError> {
     #[cfg(feature = "github")]
     {
         resources = resources.with_resource(
-            SkipperServer::watch_resource_info()?,
+            SkipperServer::watch_resource_info(),
             SkipperServer::watch_handler,
             Some(SkipperServer::watch_visibility),
         );
@@ -303,52 +299,50 @@ fn resource_router() -> Result<McpResourceRouter<SkipperServer>, AppsError> {
     #[cfg(feature = "tea")]
     {
         resources = resources.with_resource(
-            SkipperServer::repo_resource_info()?,
+            SkipperServer::repo_resource_info(),
             SkipperServer::repo_handler,
             Some(SkipperServer::repo_visibility),
         );
     }
 
-    Ok(resources)
+    resources
 }
 
-// Template metadata is fallible only when a template-providing forge is enabled.
-#[cfg_attr(not(any(feature = "github", feature = "tea")), allow(clippy::unnecessary_wraps))]
-fn template_router() -> Result<McpResourceTemplateRouter<SkipperServer>, AppsError> {
+fn template_router() -> McpResourceTemplateRouter<SkipperServer> {
     #[allow(unused_mut)]
     let mut templates = McpResourceTemplateRouter::new();
 
     #[cfg(feature = "github")]
     {
         templates = templates
-            .with_template(SkipperServer::pr_template_info()?, SkipperServer::pr_handler, None)
+            .with_template(SkipperServer::pr_template_info(), SkipperServer::pr_handler, None)
             .with_template(
-                SkipperServer::pr_files_template_info()?,
+                SkipperServer::pr_files_template_info(),
                 SkipperServer::pr_files_handler,
                 None,
             )
             .with_template(
-                SkipperServer::pr_checks_template_info()?,
+                SkipperServer::pr_checks_template_info(),
                 SkipperServer::pr_checks_handler,
                 None,
             )
             .with_template(
-                SkipperServer::pr_comments_template_info()?,
+                SkipperServer::pr_comments_template_info(),
                 SkipperServer::pr_comments_handler,
                 None,
             )
             .with_template(
-                SkipperServer::pr_comments_kind_template_info()?,
+                SkipperServer::pr_comments_kind_template_info(),
                 SkipperServer::pr_comments_kind_handler,
                 None,
             )
             .with_template(
-                SkipperServer::watch_comments_template_info()?,
+                SkipperServer::watch_comments_template_info(),
                 SkipperServer::watch_comments_handler,
                 Some(SkipperServer::watch_comments_visibility),
             )
             .with_template(
-                SkipperServer::pr_list_template_info()?,
+                SkipperServer::pr_list_template_info(),
                 SkipperServer::pr_list_handler,
                 None,
             );
@@ -358,18 +352,18 @@ fn template_router() -> Result<McpResourceTemplateRouter<SkipperServer>, AppsErr
     {
         templates = templates
             .with_template(
-                SkipperServer::issues_template_info()?,
+                SkipperServer::issues_template_info(),
                 SkipperServer::issues_handler,
                 Some(SkipperServer::issues_visibility),
             )
             .with_template(
-                SkipperServer::issue_template_info()?,
+                SkipperServer::issue_template_info(),
                 SkipperServer::issue_handler,
                 Some(SkipperServer::issue_visibility),
             );
     }
 
-    Ok(templates)
+    templates
 }
 
 #[cfg(all(test, feature = "github"))]

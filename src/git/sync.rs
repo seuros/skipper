@@ -181,37 +181,21 @@ pub(crate) fn transient(output: &str) -> bool {
     TRANSIENT.iter().any(|marker| output.contains(marker))
 }
 
-enum Attempt {
-    Transient(SyncOutcome),
-    Failed(GitError),
-}
-
 /// `git args`, tried up to three times (~1s doubling, jittered) while it
 /// fails on the network. Fetch, fast-forward pull and push of the same refs
 /// are all safe to repeat. A timeout is not retried: its wait is long already.
 async fn run(cwd: &Path, remote: &str, args: &[&str]) -> Result<SyncOutcome, GitError> {
-    use chrono_machines::{AsyncRetryable, RetryOutcome};
-
-    let backoff = crate::provider::network_backoff(3);
-    let attempt = || async {
+    let mut retry = crate::provider::network_backoff(3);
+    loop {
         match run_once(cwd, remote, args).await {
             Ok(outcome) if !outcome.ok && transient(&outcome.output) => {
-                Err(Attempt::Transient(outcome))
+                match retry.failed(crate::provider::draw()) {
+                    Ok(delay) => tokio::time::sleep(delay).await,
+                    Err(_) => return Ok(outcome),
+                }
             }
-            Ok(outcome) => Ok(outcome),
-            Err(e) => Err(Attempt::Failed(e)),
+            result => return result,
         }
-    };
-    let result = attempt
-        .retry_async(backoff)
-        .when(|a: &Attempt| matches!(a, Attempt::Transient(_)))
-        .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
-        .await
-        .map(RetryOutcome::into_inner)
-        .map_err(chrono_machines::RetryError::into_cause);
-    match result {
-        Ok(outcome) | Err(Attempt::Transient(outcome)) => Ok(outcome),
-        Err(Attempt::Failed(e)) => Err(e),
     }
 }
 

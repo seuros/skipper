@@ -10,14 +10,15 @@ pub mod github;
 use crate::tracing;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::num::{NonZeroU8, NonZeroU64};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use chrono_machines::{BackoffStrategy, ExponentialBackoff};
+use chrono_machines::Exponential;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use throttle_machines::{Gate, TokenBucket, TokenBucketParams, TokenBucketState};
+use throttle_machines::{Gate, TokenBucket, TokenBucketPolicy};
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
 
@@ -185,34 +186,32 @@ pub struct RateHint {
 /// Process-wide request budget on top of per-PR backoff: bursts of 10,
 /// refilled at 30 a minute.
 pub struct ApiBudget {
-    bucket: Mutex<TokenBucketState>,
-    params: TokenBucketParams,
+    bucket: Mutex<TokenBucket>,
     clock: std::time::Instant,
 }
 
+const API_BUDGET: TokenBucketPolicy =
+    match TokenBucketPolicy::new(NonZeroU64::new(10).expect("ten"), Duration::from_secs(2)) {
+        Some(policy) => policy,
+        None => panic!("api budget: refills"),
+    };
+
 impl ApiBudget {
     fn new() -> Self {
-        let params = TokenBucketParams { capacity: 10.0, refill_rate: 0.5 };
-        Self {
-            bucket: Mutex::new(TokenBucketState { tokens: params.capacity, last_refill: 0.0 }),
-            params,
-            clock: std::time::Instant::now(),
-        }
+        Self { bucket: Mutex::new(TokenBucket::new(API_BUDGET)), clock: std::time::Instant::now() }
     }
 
     pub async fn acquire(&self) {
         loop {
             let retry_after = {
                 let mut bucket = self.bucket.lock().expect("api budget lock poisoned");
-                let now = self.clock.elapsed().as_secs_f64();
-                let decision = TokenBucket::check(*bucket, now, self.params);
-                if decision.allowed {
-                    *bucket = decision.state;
+                let now = self.clock.elapsed();
+                if bucket.check(now).is_ok() {
                     return;
                 }
-                decision.retry_after
+                bucket.retry_after(now)
             };
-            tokio::time::sleep(Duration::from_secs_f64(retry_after.max(0.05))).await;
+            tokio::time::sleep(retry_after).await;
         }
     }
 }
@@ -573,25 +572,30 @@ impl Drop for Blocker {
     }
 }
 
+const BLOCKING_POLL: Exponential =
+    match Exponential::new(Duration::from_secs(10), 1.5, Duration::from_mins(2), 0.2) {
+        Some(shape) => shape,
+        None => panic!("blocking poll: base within cap, growing"),
+    };
+
+const IDLE_POLL: Exponential =
+    match Exponential::new(Duration::from_secs(10), 1.5, Duration::from_mins(5), 0.2) {
+        Some(shape) => shape,
+        None => panic!("idle poll: base within cap, growing"),
+    };
+
 /// Next poll for one PR: 10s growing 1.5x per quiet poll, capped at 2 min
 /// while a call waits or 5 min otherwise; 30s at most while checks run.
 /// Rate headers only ever stretch it.
 fn next_delay(quiet: u8, blocking: bool, checks_pending: bool, rate: &RateHint) -> Duration {
-    let cap_ms = if blocking { 120_000 } else { 300_000 };
-    let backoff = ExponentialBackoff::new()
-        .base_delay_ms(10_000)
-        .multiplier(1.5)
-        .max_delay_ms(cap_ms)
-        .max_attempts(u8::MAX)
-        .jitter_factor(0.2);
-    let attempt = quiet.min(u8::MAX - 2) + 1;
-    let mut ms = backoff.delay(attempt, &mut chrono_machines::rand::rng()).unwrap_or(cap_ms);
+    let backoff = if blocking { BLOCKING_POLL } else { IDLE_POLL };
+    let mut delay = backoff.delay(NonZeroU8::MIN.saturating_add(quiet), crate::provider::draw());
 
     if checks_pending {
-        ms = ms.min(30_000);
+        delay = delay.min(Duration::from_secs(30));
     }
     if let Some(secs) = rate.retry_after {
-        ms = ms.max(secs * 1000);
+        delay = delay.max(Duration::from_secs(secs));
     }
     if let (Some(left), Some(reset)) = (rate.remaining, rate.reset)
         && left < LOW_WATER
@@ -599,9 +603,9 @@ fn next_delay(quiet: u8, blocking: bool, checks_pending: bool, rate: &RateHint) 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        ms = ms.max(reset.saturating_sub(now) * 1000 / (left + 1));
+        delay = delay.max(Duration::from_millis(reset.saturating_sub(now) * 1000 / (left + 1)));
     }
-    Duration::from_millis(ms).max(MIN_GAP)
+    delay.max(MIN_GAP)
 }
 
 /// Errors that retrying will not fix: the PR is gone or out of reach, or the

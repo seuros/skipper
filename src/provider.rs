@@ -17,10 +17,11 @@ use crate::error::{CliError, Result};
 use crate::executor;
 use crate::tracing;
 use crate::version;
-use chrono_machines::{BackoffStrategy, ExponentialBackoff};
+use chrono_machines::{Exponential, Retry, Strategy};
 use semver::Version;
 use std::collections::HashMap;
 use std::future::Future;
+use std::num::NonZeroU8;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -172,19 +173,21 @@ pub(crate) const RETRY_ATTEMPTS: u8 = 4;
 /// layer for forge HTTP calls: resources answer its exhaustion with
 /// `RetryExhausted`, which mcp-host does not retry again.
 #[cfg(any(feature = "github", feature = "tea"))]
-pub(crate) async fn retrying<T, F, Fut>(call: F) -> Result<T>
+pub(crate) async fn retrying<T, F, Fut>(mut call: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
-    use chrono_machines::{AsyncRetryable, RetryOutcome};
-
-    call.retry_async(network_backoff(RETRY_ATTEMPTS))
-        .when(retryable)
-        .call_async(|ms| tokio::time::sleep(Duration::from_millis(ms)))
-        .await
-        .map(RetryOutcome::into_inner)
-        .map_err(chrono_machines::RetryError::into_cause)
+    let mut retry = network_backoff(RETRY_ATTEMPTS);
+    loop {
+        match call().await {
+            Err(e) if retryable(&e) => match retry.failed(draw()) {
+                Ok(delay) => tokio::time::sleep(delay).await,
+                Err(_) => return Err(e),
+            },
+            result => return result,
+        }
+    }
 }
 
 /// The network dropped, or the forge answered 5xx: a repeat may get through.
@@ -301,26 +304,32 @@ impl<P: Provider> ProviderExt for P {
     }
 }
 
-/// Retry delays for a network call: ~1s doubling to 4s, jittered, at most
-/// `attempts` tries in all.
-pub(crate) const fn network_backoff(attempts: u8) -> ExponentialBackoff {
-    ExponentialBackoff::new()
-        .base_delay_ms(1_000)
-        .multiplier(2.0)
-        .max_delay_ms(4_000)
-        .max_attempts(attempts)
-        .jitter_factor(0.5)
-}
+/// Retry delays for a network call: ~1s doubling to 4s, jittered.
+const NETWORK_SHAPE: Exponential =
+    match Exponential::new(Duration::from_secs(1), 2.0, Duration::from_secs(4), 0.5) {
+        Some(shape) => shape,
+        None => panic!("network backoff: base within cap, doubling"),
+    };
 
 /// Re-probe delays for unreachable providers: ~5s doubling to a 60s cap,
 /// seven retries (a few minutes) before giving up.
-const fn reprobe_backoff() -> ExponentialBackoff {
-    ExponentialBackoff::new()
-        .base_delay_ms(5_000)
-        .multiplier(2.0)
-        .max_delay_ms(60_000)
-        .max_attempts(8)
-        .jitter_factor(0.5)
+const REPROBE_BACKOFF: Retry = Retry::new(
+    Strategy::Exponential(
+        match Exponential::new(Duration::from_secs(5), 2.0, Duration::from_mins(1), 0.5) {
+            Some(shape) => shape,
+            None => panic!("reprobe backoff: base within cap, doubling"),
+        },
+    ),
+    NonZeroU8::new(8),
+);
+
+/// [`NETWORK_SHAPE`], at most `attempts` tries in all.
+pub(crate) const fn network_backoff(attempts: u8) -> Retry {
+    Retry::new(Strategy::Exponential(NETWORK_SHAPE), NonZeroU8::new(attempts))
+}
+
+pub(crate) fn draw() -> u64 {
+    rand::random()
 }
 
 pub struct Registry {
@@ -403,22 +412,22 @@ impl Registry {
     /// Re-probe unreachable providers with backoff until none remain or the
     /// attempts run out. `on_available` receives each batch that came online.
     pub async fn retry_unreachable(&self, on_available: impl Fn(&[&'static str])) {
-        let backoff = reprobe_backoff();
+        let mut retry = REPROBE_BACKOFF;
 
-        for attempt in 1..=u8::MAX {
+        loop {
             let pending = self.unreachable();
             if pending.is_empty() {
                 return;
             }
 
-            let Some(delay_ms) = backoff.delay(attempt, &mut chrono_machines::rand::rng()) else {
+            let Ok(delay) = retry.failed(draw()) else {
                 tracing::warn!(
                     providers = ?pending,
                     "providers still unreachable; giving up, their tools stay hidden"
                 );
                 return;
             };
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            tokio::time::sleep(delay).await;
 
             let online: Vec<&'static str> = self
                 .detect(&pending)

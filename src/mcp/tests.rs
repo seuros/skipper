@@ -169,7 +169,7 @@ async fn client_without_elicitation_can_push_when_writes_are_enabled_and_confirm
         .build();
     server
         .register_router(
-            tools::router().unwrap(),
+            tools::router(),
             Arc::new(SkipperServer {
                 #[cfg(any(feature = "github", feature = "gitlab"))]
                 registry,

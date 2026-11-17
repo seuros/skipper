@@ -5,6 +5,8 @@ use crate::provider::{BoxFuture, BuildRun, CiTarget, Provider, is_zero, retryabl
 use crate::tracing;
 use crate::version::minimum;
 use crate::workspace::ForgeRepo;
+use deadline_machines::Deadline;
+use deadline_machines::tokio_support::TokioClock;
 use schemars::JsonSchema;
 use semver::Version;
 use serde::de::DeserializeOwned;
@@ -280,8 +282,8 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<Vec<PrCheck>>>,
 {
-    let start = tokio::time::Instant::now();
-    let deadline = start + timeout;
+    let clock = TokioClock::new();
+    let deadline = Deadline::after(clock.now(), timeout);
     let registration_grace = Duration::from_secs(120).min(timeout);
     let mut last = None;
 
@@ -290,7 +292,7 @@ where
             Ok(checks) => {
                 let counts = CheckCounts::tally(&checks);
                 let settled = if checks.is_empty() {
-                    start.elapsed() >= registration_grace
+                    clock.now() >= registration_grace
                 } else {
                     counts.pending == 0 || (fail_fast && counts.fail > 0)
                 };
@@ -307,14 +309,14 @@ where
             Err(e) => return Err(e),
         };
 
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
+        let now = clock.now();
+        if deadline.is_expired(now) {
             return match last {
                 Some(checks) => Ok(ChecksWatch { checks, timed_out: true }),
                 None => Err(error.expect("a watch with no snapshot ended on a failed poll")),
             };
         }
-        tokio::time::sleep(interval.min(deadline - now)).await;
+        tokio::time::sleep(deadline.clamp_sleep(now, interval)).await;
     }
 }
 
