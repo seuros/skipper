@@ -130,7 +130,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19e739587d0770e8766cf952f42b26622354395bbc83fc15ebf1a76cd2052013"
 dependencies = [
- "state-machines",
+ "state-machines 0.34.2",
 ]
 
 [[package]]
@@ -222,7 +222,7 @@ checksum = "7fc81870e2f03b6cbd053df8dc52ad6216a86cb7c3d47d4440b52ca7f52114e8"
 dependencies = [
  "chrono-machines",
  "periscope-machines",
- "state-machines",
+ "state-machines 0.34.2",
 ]
 
 [[package]]
@@ -565,9 +565,9 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "deadline-machines"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da2c41f4fe7e16b2ea82f392e628fa0f1a03de6b7cdb6b80f540e13f4eaaeabc"
+checksum = "ef0dade0f43e6d4da638f67256515519eaad07374a4fb7cea2ea31d17e6859be"
 dependencies = [
  "tokio",
 ]
@@ -728,7 +728,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2615,9 +2615,9 @@ dependencies = [
 
 [[package]]
 name = "mcp-host"
-version = "0.27.0"
+version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f26382da2a568bcb8bd7fc30773753ff69649c425e57bdc52b2433910c1009b0"
+checksum = "b27b175b24cbf6b706c0ab67a84638a0cc5a666dc1bf19868ee631c11d89acf7"
 dependencies = [
  "arc-swap",
  "base64",
@@ -2639,7 +2639,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shed-machines",
- "state-machines",
+ "state-machines 0.35.0",
  "strum",
  "thiserror",
  "throttle-machines",
@@ -3821,7 +3821,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4228,8 +4228,18 @@ version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45c631fdc2cefc7f9d691e6da1d8be69b17523e5d819045a83163800e59dd378"
 dependencies = [
- "state-machines-core",
- "state-machines-macro",
+ "state-machines-core 0.14.0",
+ "state-machines-macro 0.34.2",
+]
+
+[[package]]
+name = "state-machines"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2fb3f0428a4a79e7929cacf1186fea42291446987807a5136daae4161c13fcf"
+dependencies = [
+ "state-machines-core 0.15.0",
+ "state-machines-macro 0.35.0",
 ]
 
 [[package]]
@@ -4239,10 +4249,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4c4c5f387ceb2d1562a5dc93c28c1bad75305af92f84eee53325dde2b983b14"
 
 [[package]]
+name = "state-machines-core"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d027fb20a763004675f678951c6c9537d9dbc2b26056c37d41cefb014e55daf"
+
+[[package]]
 name = "state-machines-macro"
 version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3de00708d997638f2c4b08fc6581e6133c32ea245c2005466424652c6ae59f61"
+dependencies = [
+ "harel-machines",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "state-machines-macro"
+version = "0.35.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c16c56f4525fd7923580b96d7066341d3b10e772aa2e679e0c65b04881ba9439"
 dependencies = [
  "harel-machines",
  "proc-macro2",
@@ -4355,7 +4383,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4949,7 +4977,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

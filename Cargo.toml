@@ -25,7 +25,7 @@ serde_json = "1"
 toml = "1.2"
 semver = "1"
 thiserror = "2"
-mcp-host = { version = "0.27", features = ["macros"] }
+mcp-host = { version = ">=0.28.1", features = ["macros"] }
 schemars = "1.2.3"
 jiff = { version = "0.2", features = ["serde"] }
 urlencoding = "2"
@@ -35,7 +35,7 @@ similar = "3.2.1"
 url = "2.5.8"
 chrono-machines = "0.13"
 throttle-machines = "0.6"
-deadline-machines = { version = "0.5", features = ["tokio"] }
+deadline-machines = { version = ">=0.6", features = ["tokio"] }
 rand = "0.10"
 gix = { version = "=0.90.0", features = ["max-performance", "blob-diff", "status", "revision", "blame", "command"] }
 
