@@ -20,6 +20,8 @@ mod provider;
 mod remote;
 mod tracing;
 mod version;
+#[cfg(feature = "github")]
+mod watch_until;
 mod watcher;
 mod workspace;
 

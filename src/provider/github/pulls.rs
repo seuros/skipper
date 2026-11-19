@@ -35,7 +35,104 @@ const SEARCH_QUERY: &str = r"query($q: String!) {
   }
 }";
 
+const OPEN_QUERY: &str = r"query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes { number title state mergedAt headRefName body createdAt }
+    }
+  }
+}";
+
+const STATE_QUERY: &str = r"query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { number title state mergedAt headRefName }
+  }
+}";
+
+/// An open PR with what a watch matches it on.
+#[derive(Debug, Clone)]
+pub struct OpenPr {
+    pub pr: PrState,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Brief {
+    number: u64,
+    title: String,
+    state: String,
+    merged_at: Option<String>,
+    head_ref_name: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    created_at: String,
+}
+
+impl Brief {
+    fn into_open(self) -> OpenPr {
+        OpenPr {
+            pr: PrState {
+                pr: self.number,
+                title: self.title,
+                head: self.head_ref_name,
+                state: lowercase(self.state),
+                merged_at: self.merged_at,
+            },
+            body: self.body,
+            created_at: self.created_at,
+        }
+    }
+}
+
 impl GitHubProvider {
+    /// The 30 newest open PRs of `repo`, newest first. Read from the
+    /// repository, not the search index, which lags a new PR by minutes.
+    pub async fn open_prs(&self, repo: &ForgeRepo) -> Result<Vec<OpenPr>> {
+        #[derive(Deserialize)]
+        struct Data {
+            repository: Option<Repository>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Repository {
+            pull_requests: Nodes<Brief>,
+        }
+        #[derive(Serialize)]
+        struct Variables<'a> {
+            owner: &'a str,
+            name: &'a str,
+        }
+
+        let variables = Variables { owner: &repo.owner, name: &repo.name };
+        let data: Data = self.graphql(&repo.host, OPEN_QUERY, &variables).await?;
+        let repository = data
+            .repository
+            .ok_or_else(|| CliError::no_target(format!("no repository {}", repo.full_name())))?;
+        Ok(repository.pull_requests.nodes.into_iter().map(Brief::into_open).collect())
+    }
+
+    /// PR `number`'s state (open | closed | merged), without its checks.
+    pub async fn pr_state(&self, repo: &ForgeRepo, number: u64) -> Result<PrState> {
+        #[derive(Deserialize)]
+        struct Data {
+            repository: Option<Repository>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Repository {
+            pull_request: Option<Brief>,
+        }
+
+        let variables = PrVariables { owner: &repo.owner, name: &repo.name, number };
+        let data: Data = self.graphql(&repo.host, STATE_QUERY, &variables).await?;
+        data.repository.and_then(|r| r.pull_request).map(|brief| brief.into_open().pr).ok_or_else(
+            || CliError::no_target(format!("no pull request #{number} in {}", repo.full_name())),
+        )
+    }
+
     /// The PR in `repo` whose head is `head_owner`'s `branch`.
     pub async fn pr_for_branch(
         &self,

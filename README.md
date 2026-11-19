@@ -175,6 +175,7 @@ Skipper speaks MCP over stdio. Add it to your client config:
 | `build_watch` | GitHub/GitLab | Wait for a CI run's status to change, up to a bounded time; `commit=` waits for every run of a commit (task-capable) |
 | `pr_build_wait` | GitHub | Wait for a PR's checks to finish; structured verdict (task-capable) |
 | `pr_watch` | GitHub | Watch PRs for merge, close, comments, reviews, checks, and pushes (task-capable) |
+| `watch_until` | GitHub | Wait for a chain of conditions in order: a PR opening, a PR merging, a workflow run finishing (task-capable) |
 | `pr_merge` | GitHub, writes | Merge a PR after checking state, draft, conflicts, checks and the allowed method; confirmed |
 | `git_push` | writes | Push branches and tags to one, several, or all remotes; never forces; confirmed |
 | `git_pull` | writes | Fast-forward the branch to its upstream; never merges |
@@ -288,6 +289,38 @@ quiet (5 when no call waits) and back to 10s on any change; running checks
 cap it at 30s. `Retry-After` and a low `X-RateLimit-Remaining` stretch it
 further, and a process-wide token bucket caps the request rate. A watch with
 no calls or resource reads for 30 minutes stops.
+
+## Chained waits (GitHub)
+
+`watch_until` waits for up to six conditions in order, in one call, and may
+wait for things that do not exist yet:
+
+- `pr_opened`: an open PR matching `title_contains`, `head_prefix` and
+  `mentions` (title or description), such as the release PR a push will open
+  or update.
+- `pr_merged`: a PR is merged, `pr` or the one a `pr_opened` step found. A PR
+  closed without a merge fails the chain.
+- `run_finished`: a workflow run matching `workflow` and `branch` (a tag works)
+  finishes; anything but success fails the chain. After another step it is
+  the first run created since that step's event, so the build a merge starts
+  is confused neither with the previous release's nor with the next one's. As
+  the first step it is the newest run; without `branch`, runs that had already
+  finished before the call are ignored.
+
+```json
+{ "steps": [
+    { "wait_for": "pr_opened", "title_contains": "release", "mentions": "abc1234" },
+    { "wait_for": "pr_merged" },
+    { "wait_for": "run_finished", "workflow": "Release - Build" } ] }
+```
+
+The result lists every step as `done`, `failed`, `waiting` or `not_reached`.
+`expired` means `wait_secs` (default 1 hour, at most 4) ran out on the step
+still `waiting`: call again with the remaining steps, pinning `pr` and
+`branch` from the result. It polls every 15s for a step's first five minutes
+and every 30s after, reading the repository rather than the search index,
+which lags a new PR by minutes. It declares optional MCP task support, which
+is how a client runs it in the background and is told when it ends.
 
 ## Configuration
 

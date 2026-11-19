@@ -37,6 +37,33 @@ impl GitHubProvider {
         Ok(runs.workflow_runs.into_iter().map(Into::into).collect())
     }
 
+    /// The 50 newest workflow runs of `repo` (on `branch` or tag when given)
+    /// with their creation times, newest first.
+    pub async fn dated_runs(
+        &self,
+        repo: &ForgeRepo,
+        branch: Option<&str>,
+    ) -> Result<Vec<DatedRun>> {
+        #[derive(Deserialize)]
+        struct Runs {
+            workflow_runs: Vec<WorkflowRun>,
+        }
+        let branch = fmt::from_fn(|f| match branch {
+            Some(branch) => write!(f, "&branch={}", urlencoding::encode(branch)),
+            None => Ok(()),
+        });
+        let url = rest_url(
+            &repo.host,
+            format_args!("{}/actions/runs?per_page=50{branch}", repo_path(repo)),
+        );
+        let runs: Runs = self.api_json_at(&repo.host, &url).await?;
+        Ok(runs
+            .workflow_runs
+            .into_iter()
+            .map(|mut run| DatedRun { created_at: run.created_at.take(), run: run.into() })
+            .collect())
+    }
+
     /// Every workflow run of commit `sha`.
     pub async fn commit_runs(&self, repo: &ForgeRepo, sha: &str) -> Result<Vec<BuildRun>> {
         #[derive(Deserialize)]
@@ -103,6 +130,13 @@ pub struct OwnedRepo {
     pub description: Option<String>,
 }
 
+/// A run and when it was created (RFC 3339).
+#[derive(Debug, Clone)]
+pub struct DatedRun {
+    pub run: BuildRun,
+    pub created_at: Option<String>,
+}
+
 /// A workflow run as the REST API reports it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowRun {
@@ -115,6 +149,8 @@ pub struct WorkflowRun {
     pub name: Option<String>,
     pub display_title: Option<String>,
     pub html_url: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 impl From<WorkflowRun> for BuildRun {

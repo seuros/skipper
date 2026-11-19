@@ -17,6 +17,8 @@ pub mod pr_merge;
 pub mod pr_watch;
 #[cfg(feature = "tea")]
 pub mod repo_search;
+#[cfg(feature = "github")]
+pub mod watch_until;
 
 use mcp_host::prelude::*;
 use schemars::JsonSchema;
@@ -235,6 +237,11 @@ fn tool_router() -> McpToolRouter<SkipperServer> {
                 SkipperServer::pr_watch_tool_info(),
                 SkipperServer::pr_watch_handler,
                 Some(SkipperServer::pr_watch_visibility),
+            )
+            .with_tool(
+                SkipperServer::watch_until_tool_info(),
+                SkipperServer::watch_until_handler,
+                Some(SkipperServer::watch_until_visibility),
             )
             .with_tool(
                 SkipperServer::pr_merge_tool_info(),

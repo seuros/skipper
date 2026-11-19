@@ -76,3 +76,62 @@ fn test_pr_watch_result_fits_output_schema_when_checks_pass() {
     let schema = SkipperServer::pr_watch_tool_info().output_schema;
     assert_fits_output_schema(schema.as_ref(), &result);
 }
+
+#[tokio::test(start_paused = true)]
+async fn test_watch_until_outcome_fits_output_schema() {
+    use crate::error::Result;
+    use crate::provider::BuildRun;
+    use crate::provider::github::{DatedRun, OpenPr, PrState};
+    use crate::watch_until::{Forge, Step, run};
+
+    struct Merged;
+    impl Forge for Merged {
+        fn open_prs(&self) -> impl Future<Output = Result<Vec<OpenPr>>> + Send {
+            std::future::ready(Ok(Vec::new()))
+        }
+
+        fn pr_state(&self, number: u64) -> impl Future<Output = Result<PrState>> + Send {
+            std::future::ready(Ok(PrState {
+                pr: number,
+                title: "release".to_string(),
+                head: "release".to_string(),
+                state: "merged".to_string(),
+                merged_at: Some("2026-11-19T09:00:00Z".to_string()),
+            }))
+        }
+
+        fn runs(
+            &self,
+            _branch: Option<&str>,
+        ) -> impl Future<Output = Result<Vec<DatedRun>>> + Send {
+            std::future::ready(Ok(vec![DatedRun {
+                run: BuildRun {
+                    id: "9".to_string(),
+                    status: "queued",
+                    branch: Some("v1".to_string()),
+                    workflow: Some("Build".to_string()),
+                    title: None,
+                    url: None,
+                },
+                created_at: Some("2026-11-19T09:00:10Z".to_string()),
+            }]))
+        }
+    }
+
+    let steps: Vec<Step> = serde_json::from_value(serde_json::json!([
+        { "wait_for": "pr_merged", "pr": 4 },
+        { "wait_for": "run_finished", "workflow": "build" },
+        { "wait_for": "run_finished", "branch": "v2" }
+    ]))
+    .unwrap();
+    let started = "2026-11-19T08:59:00Z".parse().unwrap();
+    let outcome = run(&Merged, &steps, std::time::Duration::from_mins(1), started).await;
+    assert!(outcome.expired);
+
+    let info = SkipperServer::watch_until_tool_info();
+    assert_fits_output_schema(info.output_schema.as_ref(), &outcome);
+    let input = serde_json::to_string(&info.input_schema).unwrap();
+    for name in ["pr_opened", "pr_merged", "run_finished", "title_contains"] {
+        assert!(input.contains(name), "{name} missing from {input}");
+    }
+}
