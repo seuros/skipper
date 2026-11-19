@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/seuros/skipper/compare/skipper-v0.10.4...skipper-v0.11.0) (2026-11-19)
+
+
+### Features
+
+* watch_until pins a run by commit ([b41f09b](https://github.com/seuros/skipper/commit/b41f09bccab3921f6c0f9540731d2e4a1cb61cd1))
+* watch_until waits for a chain of PR and workflow run conditions ([6b0d939](https://github.com/seuros/skipper/commit/6b0d9396e3f435a5fa57642a9051cecf6341e421))
+
+
+### Bug Fixes
+
+* **deps:** mcp-host 0.28.1, deadline-machines 0.6 ([0030cf2](https://github.com/seuros/skipper/commit/0030cf27cf72427ad87a198e58653231e08be808))
+
 ## [0.10.4](https://github.com/seuros/skipper/compare/skipper-v0.10.3...skipper-v0.10.4) (2026-11-17)
 
 
