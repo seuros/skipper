@@ -60,7 +60,11 @@ impl GitHubProvider {
         Ok(runs
             .workflow_runs
             .into_iter()
-            .map(|mut run| DatedRun { created_at: run.created_at.take(), run: run.into() })
+            .map(|mut run| DatedRun {
+                created_at: run.created_at.take(),
+                head_sha: run.head_sha.take(),
+                run: run.into(),
+            })
             .collect())
     }
 
@@ -130,11 +134,12 @@ pub struct OwnedRepo {
     pub description: Option<String>,
 }
 
-/// A run and when it was created (RFC 3339).
+/// A run, when it was created (RFC 3339) and the commit it ran on.
 #[derive(Debug, Clone)]
 pub struct DatedRun {
     pub run: BuildRun,
     pub created_at: Option<String>,
+    pub head_sha: Option<String>,
 }
 
 /// A workflow run as the REST API reports it.
@@ -151,6 +156,8 @@ pub struct WorkflowRun {
     pub html_url: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub head_sha: Option<String>,
 }
 
 impl From<WorkflowRun> for BuildRun {

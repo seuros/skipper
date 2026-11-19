@@ -70,6 +70,10 @@ fn build(id: &str, status: &'static str, branch: &str, created: String) -> Dated
             url: None,
         },
         created_at: Some(created),
+        head_sha: Some(
+            format!("{id}{id}{id}{id}{id}{id}{id}0000000000000000000000000000000000")[..40]
+                .to_string(),
+        ),
     }
 }
 
@@ -194,6 +198,29 @@ async fn test_first_run_step_skips_runs_finished_before_the_call() {
     assert_eq!(outcome.waited_secs, 0);
 }
 
+#[tokio::test(start_paused = true)]
+async fn test_commit_waits_for_its_own_run_on_a_reused_tag() {
+    // Run 1 is an earlier, finished run; with the tag alone it would answer.
+    let forge = Release::new();
+    let steps: Vec<Step> = serde_json::from_value(serde_json::json!([
+        { "wait_for": "run_finished", "workflow": "release", "commit": "2222222" }
+    ]))
+    .unwrap();
+    let outcome = run(&forge, &steps, Duration::from_hours(1), started()).await;
+
+    assert!(outcome.completed, "{outcome:?}");
+    assert_eq!(outcome.steps[0].run.as_ref().unwrap().id, "2");
+    assert!(outcome.waited_secs >= 400);
+
+    let after_merge: Vec<Step> = serde_json::from_value(serde_json::json!([
+        { "wait_for": "pr_merged", "pr": 7 },
+        { "wait_for": "run_finished", "commit": "3333333" }
+    ]))
+    .unwrap();
+    let outcome = run(&Release::new(), &after_merge, Duration::from_hours(1), started()).await;
+    assert_eq!(outcome.steps[1].run.as_ref().unwrap().id, "3");
+}
+
 #[test]
 fn test_validate_names_the_step_to_fix() {
     let steps = |value| serde_json::from_value::<Vec<Step>>(value).unwrap();
@@ -210,4 +237,9 @@ fn test_validate_names_the_step_to_fix() {
     ])))
     .unwrap_err();
     assert!(error.contains("step 1 (run_finished)"), "{error}");
+    let error = validate(&steps(serde_json::json!([
+        { "wait_for": "run_finished", "commit": "abc" }
+    ])))
+    .unwrap_err();
+    assert!(error.contains("7 to 40 hex"), "{error}");
 }

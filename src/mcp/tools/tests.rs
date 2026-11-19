@@ -114,6 +114,7 @@ async fn test_watch_until_outcome_fits_output_schema() {
                     url: None,
                 },
                 created_at: Some("2026-11-19T09:00:10Z".to_string()),
+                head_sha: None,
             }]))
         }
     }

@@ -44,13 +44,17 @@ pub enum Step {
     },
     /// A workflow run finishes; anything but success fails the chain. After
     /// another step, the first run created since that step's event is the
-    /// one. As the first step, the newest run; without `branch`, runs that
-    /// had finished before the call are ignored.
+    /// one. As the first step, the newest run; without `branch` or `commit`,
+    /// runs that had finished before the call are ignored. A tag or branch
+    /// keeps the runs of every commit it ever pointed at: pass `commit` to
+    /// wait for the run of one push, which need not have started yet.
     RunFinished {
         /// Workflow name contains this (case-insensitive)
         workflow: Option<String>,
         /// The run's branch or tag, exactly
         branch: Option<String>,
+        /// The run's commit: a full sha or a prefix of 7 or more characters
+        commit: Option<String>,
     },
 }
 
@@ -88,14 +92,25 @@ pub fn validate(steps: &[Step]) -> std::result::Result<(), String> {
                 }
                 pr_known = true;
             }
-            Step::RunFinished { workflow, branch } => {
-                if blank(workflow.as_deref()) && blank(branch.as_deref()) {
-                    return Err(format!("step {index} (run_finished) needs workflow or branch"));
+            Step::RunFinished { workflow, branch, commit } => {
+                if [workflow, branch, commit].iter().all(|f| blank(f.as_deref())) {
+                    return Err(format!(
+                        "step {index} (run_finished) needs workflow, branch or commit"
+                    ));
+                }
+                if commit.as_deref().is_some_and(|sha| !is_sha_prefix(sha.trim())) {
+                    return Err(format!(
+                        "step {index} (run_finished) commit must be 7 to 40 hex characters"
+                    ));
                 }
             }
         }
     }
     Ok(())
+}
+
+fn is_sha_prefix(sha: &str) -> bool {
+    (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn blank(value: Option<&str>) -> bool {
@@ -281,8 +296,9 @@ async fn poll<F: Forge>(forge: &F, step: &Step, carried: &Carried) -> Result<Pro
                 }),
             })
         }
-        Step::RunFinished { workflow, branch } => {
+        Step::RunFinished { workflow, branch, commit } => {
             let branch = branch.as_deref().filter(|b| !b.trim().is_empty());
+            let commit = commit.as_deref().map(str::trim).filter(|c| !c.is_empty());
             let mut runs = forge.runs(branch).await?;
             let settled = carried
                 .run
@@ -292,7 +308,11 @@ async fn poll<F: Forge>(forge: &F, step: &Step, carried: &Carried) -> Result<Pro
             let mut matching = runs.into_iter().filter(|dated| {
                 workflow.as_deref().is_none_or(|w| {
                     dated.run.workflow.as_deref().is_some_and(|name| contains(name, w))
-                }) && eligible(dated, branch.is_some(), carried)
+                }) && commit.is_none_or(|sha| {
+                    dated.head_sha.as_deref().is_some_and(|head| {
+                        head.len() >= sha.len() && head[..sha.len()].eq_ignore_ascii_case(sha)
+                    })
+                }) && (commit.is_some() || eligible(dated, branch.is_some(), carried))
             });
             // Runs come newest first. The run an earlier step's event started
             // is the oldest since it; a later release may already have its own.
