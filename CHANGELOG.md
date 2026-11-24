@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/seuros/skipper/compare/skipper-v0.11.0...skipper-v0.11.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* elicitation approval ([94792b9](https://github.com/seuros/skipper/commit/94792b9a6222dd4fd20aedb707204f53b57bf587))
+
 ## [0.11.0](https://github.com/seuros/skipper/compare/skipper-v0.10.4...skipper-v0.11.0) (2026-11-19)
 
 
