@@ -21,6 +21,7 @@ pub mod repo_search;
 pub mod watch_until;
 
 use mcp_host::prelude::*;
+use mcp_host::protocol::types::ElicitationAction;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -142,7 +143,6 @@ pub(super) async fn request_write_confirmation(
     summary: &str,
 ) -> Result<(), ToolError> {
     use mcp_host::prelude::MultiplexerError;
-    use mcp_host::protocol::types::ElicitationAction;
     use std::time::Duration;
 
     if !requester.supports_elicitation() {
@@ -168,13 +168,24 @@ pub(super) async fn request_write_confirmation(
             return Err(ToolError::Execution(format!("confirmation failed: {error}")));
         }
     };
-    let approved = answer.action == ElicitationAction::Accept
-        && answer.content.as_ref().and_then(|c| c["approve"].as_bool()) == Some(true);
-    if approved {
-        Ok(())
-    } else {
-        Err(ToolError::InvalidArguments(format!("declined by the user: {summary}")))
-    }
+    check_write_confirmation(answer.action, answer.content.as_ref(), summary)
+}
+
+fn check_write_confirmation(
+    action: ElicitationAction,
+    content: Option<&serde_json::Value>,
+    summary: &str,
+) -> Result<(), ToolError> {
+    let reason = match action {
+        ElicitationAction::Accept => match content.and_then(|c| c.get("approve")?.as_bool()) {
+            Some(true) => return Ok(()),
+            Some(false) => "approval not granted (approve=false)",
+            None => "invalid approval response (expected a boolean `approve` field)",
+        },
+        ElicitationAction::Decline => "approval declined by the client",
+        ElicitationAction::Cancel => "approval canceled",
+    };
+    Err(ToolError::InvalidArguments(format!("{reason}: {summary}")))
 }
 
 #[cfg(any(feature = "github", feature = "gitlab", feature = "tea"))]

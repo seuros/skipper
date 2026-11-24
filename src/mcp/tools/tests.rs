@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn write_confirmation_requires_explicit_approval() {
+    use ElicitationAction::{Accept, Cancel, Decline};
+    use serde_json::json;
+
+    let summary = "push topic to origin";
+    assert!(check_write_confirmation(Accept, Some(&json!({"approve": true})), summary).is_ok());
+    for (action, content, expected) in [
+        (Decline, Some(json!({"approve": true})), "approval declined by the client"),
+        (Cancel, None, "approval canceled"),
+        (Accept, Some(json!({"approve": false})), "approval not granted (approve=false)"),
+        (Accept, None, "invalid approval response (expected a boolean `approve` field)"),
+        (
+            Accept,
+            Some(json!({"approve": "true"})),
+            "invalid approval response (expected a boolean `approve` field)",
+        ),
+    ] {
+        match check_write_confirmation(action, content.as_ref(), summary) {
+            Err(ToolError::InvalidArguments(message)) => {
+                assert_eq!(message, format!("{expected}: {summary}"));
+            }
+            result => panic!("unexpected confirmation result: {result:?}"),
+        }
+    }
+}
+
 /// Clients reject structured content that breaks the tool's `outputSchema`.
 #[track_caller]
 fn assert_fits_output_schema(schema: Option<&serde_json::Value>, output: &impl serde::Serialize) {
