@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.5](https://github.com/seuros/skipper/compare/skipper-v0.11.4...skipper-v0.11.5) (2026-11-26)
+
+
+### Bug Fixes
+
+* **git:** show submodule pin changes in scoped diffs ([ae7ef58](https://github.com/seuros/skipper/commit/ae7ef58430ebbcdff91a04f0bfdbe2fe0418037d))
+
 ## [0.11.4](https://github.com/seuros/skipper/compare/skipper-v0.11.3...skipper-v0.11.4) (2026-11-26)
 
 
