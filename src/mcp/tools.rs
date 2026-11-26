@@ -21,7 +21,6 @@ pub mod repo_search;
 pub mod watch_until;
 
 use mcp_host::prelude::*;
-use mcp_host::protocol::types::ElicitationAction;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -142,48 +141,17 @@ pub(super) async fn request_write_confirmation(
     requester: &ClientRequester,
     summary: &str,
 ) -> Result<(), ToolError> {
-    use mcp_host::prelude::MultiplexerError;
+    use mcp_host::server::multiplexer::Confirmation;
     use std::time::Duration;
 
-    if !requester.supports_elicitation() {
-        return Ok(());
-    }
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "approve": { "type": "boolean", "title": "Approve", "description": summary }
-        },
-        "required": ["approve"]
-    });
-    let answer = match requester
-        .request_elicitation(summary.to_string(), schema, Some(Duration::from_secs(300)))
+    let reason = match requester
+        .request_confirmation(summary.to_string(), Some(Duration::from_secs(300)))
         .await
+        .map_err(|error| ToolError::Execution(format!("confirmation failed: {error}")))?
     {
-        Ok(answer) => answer,
-        // A client such as Chaos in headless mode cannot show a prompt.
-        // Its configured approval policy is authoritative, so don't turn
-        // the absence of an elicitation capability into a tool denial.
-        Err(MultiplexerError::UnsupportedCapability(_)) => return Ok(()),
-        Err(error) => {
-            return Err(ToolError::Execution(format!("confirmation failed: {error}")));
-        }
-    };
-    check_write_confirmation(&answer.action, answer.content.as_ref(), summary)
-}
-
-fn check_write_confirmation(
-    action: &ElicitationAction,
-    content: Option<&serde_json::Value>,
-    summary: &str,
-) -> Result<(), ToolError> {
-    let reason = match action {
-        ElicitationAction::Accept => match content.and_then(|c| c.get("approve")?.as_bool()) {
-            Some(true) => return Ok(()),
-            Some(false) => "approval not granted (approve=false)",
-            None => "invalid approval response (expected a boolean `approve` field)",
-        },
-        ElicitationAction::Decline => "approval declined by the client",
-        ElicitationAction::Cancel => "approval canceled",
+        Confirmation::Approved | Confirmation::Unavailable => return Ok(()),
+        Confirmation::Declined => "approval declined by the client",
+        Confirmation::Cancelled => "approval canceled",
     };
     Err(ToolError::InvalidArguments(format!("{reason}: {summary}")))
 }
