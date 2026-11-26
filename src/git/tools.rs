@@ -248,7 +248,7 @@ pub struct GitStatusParams {}
 #[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct GitAddParams {
-    /// Explicit repository-relative file paths to stage.
+    /// Explicit repository-relative file paths or tracked submodule roots.
     paths: Vec<String>,
 }
 
@@ -361,7 +361,10 @@ impl GitServer {
 
     #[mcp_tool(
         name = "git_add",
-        description = "Stage explicit repository-relative files or deletions. Directories, ignored new files, conflicts, and submodules are rejected.",
+        description = "Stage explicit files, file deletions, or a tracked \
+                       submodule's checked-out commit. Reject other \
+                       directories, ignored new files, conflicts, and paths \
+                       inside tracked submodules.",
         read_only = false,
         destructive = false,
         open_world = false
@@ -372,7 +375,9 @@ impl GitServer {
 
     #[mcp_tool(
         name = "git_commit",
-        description = "Create or amend a commit, with optional structured trailers. Signed when commit.gpgsign is set; git hooks are not run.",
+        description = "Create or amend a commit from the index, including \
+                       staged submodule pins. Supports structured trailers and \
+                       commit.gpgsign; git hooks are not run.",
         read_only = false,
         destructive = true,
         open_world = false

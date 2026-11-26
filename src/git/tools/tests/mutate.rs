@@ -234,7 +234,7 @@ fn execute_git_add_paths_are_relative_to_repository_root() {
 }
 
 #[test]
-fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
+fn execute_git_commit_preserves_an_unchecked_out_gitlink() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();
 
@@ -257,13 +257,60 @@ fn execute_git_commit_preserves_unchanged_gitlinks_and_rejects_changes() {
         git_output(dir, &["ls-tree", "HEAD", "vendor/reference"]).contains(&gitlink_id),
         "unchanged gitlink must be preserved"
     );
+}
 
-    let changed_gitlink_id = git_output(dir, &["rev-parse", "HEAD"]).trim().to_string();
-    git(dir, &["update-index", "--cacheinfo", "160000", &changed_gitlink_id, "vendor/reference"]);
-    let error = commit(dir, "change gitlink", false).expect_err("staged gitlink change must fail");
-    assert!(
-        error.to_string().contains("staged submodule changes are not supported: vendor/reference")
+#[test]
+fn git_add_and_commit_stage_only_the_checked_out_submodule_pin() {
+    let parent = tempdir().expect("parent");
+    let upstream = tempdir().expect("upstream");
+    let dir = parent.path();
+    let source = upstream.path();
+    init_repo(dir);
+    repo_with_commit(source, "base\n");
+    git(source, &["commit", "--allow-empty", "-m", "next"]);
+    let pin = git_output(source, &["rev-parse", "HEAD"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source.to_str().expect("source path"),
+            "sub",
+        ],
     );
+    // A gitlink staged by native Git is also valid for Skipper to commit.
+    commit(dir, "add submodule", false).expect("initial commit");
+    let sub = dir.join("sub");
+    git(&sub, &["checkout", "--detach", "HEAD^"]);
+    git(dir, &["add", "sub"]);
+    git(dir, &["commit", "-m", "pin base"]);
+    git(&sub, &["checkout", pin.trim()]);
+    fs::write(sub.join("file.txt"), "dirty\n").expect("dirty submodule");
+
+    let add =
+        |path: &str| execute_git_add_structured(dir, GitAddParams { paths: vec![path.into()] });
+    add("sub/file.txt").expect_err("cannot stage a child of a gitlink");
+    let added = add("sub").expect("stage pin");
+    assert_eq!(added["staged"], serde_json::json!(["sub"]));
+    assert_eq!(
+        git_output(dir, &["ls-files", "--stage", "sub"]),
+        format!("160000 {} 0\tsub\n", pin.trim()),
+    );
+    assert_eq!(git_output(&sub, &["diff", "--cached", "--name-only"]), "");
+
+    // Commit reads the parent's index, not the submodule's current HEAD.
+    git(&sub, &["checkout", "HEAD^"]);
+    let committed = commit(dir, "pin next", false).expect("commit pin");
+    assert_eq!(committed["committed_paths"], serde_json::json!(["sub"]));
+    assert_eq!(git_output(dir, &["rev-parse", "HEAD:sub"]), pin);
+    git(dir, &["submodule", "deinit", "-f", "sub"]);
+    add("sub").expect_err("uninitialized checkout has no HEAD to stage");
+    assert_eq!(git_output(dir, &["diff", "--cached", "--name-only"]), "");
+    fs::create_dir(dir.join("embedded")).expect("embedded directory");
+    repo_with_commit(&dir.join("embedded"), "embedded\n");
+    add("embedded").expect_err("do not create an untracked gitlink");
 }
 
 #[test]

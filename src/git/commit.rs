@@ -306,40 +306,16 @@ fn collect_staged_paths(
     head_tree_id: &gix::hash::ObjectId,
 ) -> Result<Vec<String>, GitError> {
     let mut paths = Vec::new();
-    let mut changed_submodule = None;
     repo.tree_index_status(
         head_tree_id.as_ref(),
         index,
         None,
         gix::status::tree_index::TrackRenames::Disabled,
         |change, _, _| {
-            use gix::diff::index::ChangeRef;
-            let (location, before, after) = match change {
-                ChangeRef::Addition { location, entry_mode, .. }
-                | ChangeRef::Deletion { location, entry_mode, .. } => {
-                    (location, entry_mode, entry_mode)
-                }
-                ChangeRef::Modification { location, previous_entry_mode, entry_mode, .. } => {
-                    (location, previous_entry_mode, entry_mode)
-                }
-                ChangeRef::Rewrite { location, source_entry_mode, entry_mode, .. } => {
-                    (location, source_entry_mode, entry_mode)
-                }
-            };
-            let path = location.to_string();
-            if before.is_submodule() || after.is_submodule() {
-                changed_submodule = Some(path);
-                return Ok(ControlFlow::Break(()));
-            }
-            paths.push(path);
+            paths.push(change.location().to_string());
             Ok(ControlFlow::Continue(()))
         },
     )
     .map_err(|e| GitError::Operation(format!("{e:#}")))?;
-    if let Some(path) = changed_submodule {
-        return Err(GitError::Unsupported(format!(
-            "staged submodule changes are not supported: {path}"
-        )));
-    }
     Ok(paths)
 }

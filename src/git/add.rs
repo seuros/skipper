@@ -42,7 +42,7 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
 
     let mut normalized_paths: Vec<String> = Vec::with_capacity(paths.len());
     for path in paths {
-        let normalized = normalize_explicit_path(path)?;
+        let normalized = normalize_explicit_path(&index, path)?;
         if !normalized_paths.contains(&normalized) {
             normalized_paths.push(normalized);
         }
@@ -57,22 +57,15 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
 
     for display_path in normalized_paths {
         let path = display_path.as_bytes().as_bstr();
-        let tracked = match tracked_entries(&index, path) {
-            Ok(tracked) => tracked,
-            Err(Unstageable::Conflict) => return Err(GitError::Conflict(display_path)),
-            Err(Unstageable::Submodule) => {
-                return Err(GitError::Unsupported(format!(
-                    "submodule staging is not supported: {display_path}"
-                )));
-            }
-        };
+        let tracked = tracked_mode(&index, path)?;
+        let gitlink = tracked == Some(gix::index::entry::Mode::COMMIT);
 
         let worktree_path =
             repo.workdir_path(path).ok_or_else(|| GitError::PathNotFound(display_path.clone()))?;
         let metadata = match gix::index::fs::Metadata::from_path_no_follow(&worktree_path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                if !tracked {
+                if tracked.is_none() || gitlink {
                     return Err(GitError::PathNotFound(display_path));
                 }
                 index.remove_entries(|_, entry_path, _| entry_path == path);
@@ -82,9 +75,8 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
             Err(err) => return Err(GitError::Operation(format!("{err:#}"))),
         };
 
-        let mode = worktree_mode(&metadata, &display_path)?;
-
-        if !tracked
+        let mode = worktree_mode(&metadata, &display_path, gitlink)?;
+        if tracked.is_none()
             && excludes
                 .at_entry(path, Some(mode))
                 .map_err(|e| GitError::Operation(format!("{e:#}")))?
@@ -93,7 +85,12 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
             return Err(GitError::IgnoredPath(display_path));
         }
 
-        let (id, kind) = worktree_blob(&mut pipeline, &index, path, &display_path)?;
+        let (id, kind) = worktree_entry(&mut pipeline, &index, path, gitlink)?;
+        if id.kind() != repo.object_hash() {
+            return Err(GitError::Unsupported(format!(
+                "incompatible submodule object format: {display_path}"
+            )));
+        }
         let stat = gix::index::entry::Stat::from_fs(&metadata)
             .map_err(|e| GitError::Operation(format!("{e:#}")))?;
         if let Some(entry) =
@@ -130,55 +127,53 @@ pub fn add(cwd: &Path, paths: &[String]) -> Result<AddResult, GitError> {
     Ok(AddResult { staged, removed })
 }
 
-/// Why a tracked path cannot be staged.
-enum Unstageable {
-    Conflict,
-    Submodule,
-}
-
-/// Whether `path` is tracked, refusing conflicted entries and submodules.
-fn tracked_entries(index: &gix::index::File, path: &gix::bstr::BStr) -> Result<bool, Unstageable> {
+/// The exact index entry, or an error if it has unresolved stages.
+fn tracked_mode(
+    index: &gix::index::File,
+    path: &gix::bstr::BStr,
+) -> Result<Option<gix::index::entry::Mode>, GitError> {
     let Some(range) = index.entry_range(path) else {
-        return Ok(false);
+        return Ok(None);
     };
     let entries = &index.entries()[range];
     if entries.iter().any(|entry| entry.stage() != gix::index::entry::Stage::Unconflicted) {
-        return Err(Unstageable::Conflict);
+        return Err(GitError::Conflict(path.to_string()));
     }
-    if entries.iter().any(|entry| entry.mode == gix::index::entry::Mode::COMMIT) {
-        return Err(Unstageable::Submodule);
-    }
-    Ok(true)
+    Ok(Some(entries[0].mode))
 }
 
-/// The worktree file at `path` written as a blob, through the filters.
-fn worktree_blob(
+/// gix reads a directory's own HEAD for a gitlink, not its nested files.
+fn worktree_entry(
     pipeline: &mut gix::filter::Pipeline<'_>,
     index: &gix::index::File,
     path: &gix::bstr::BStr,
-    display_path: &str,
+    gitlink: bool,
 ) -> Result<(gix::ObjectId, gix::objs::tree::EntryKind), GitError> {
     let Some((id, kind, _)) = pipeline
         .worktree_file_to_object(path, index)
         .map_err(|e| GitError::Operation(format!("{e:#}")))?
     else {
-        return Err(GitError::Unsupported(format!(
-            "unable to stage worktree entry: {display_path}"
-        )));
+        return Err(GitError::Unsupported(format!("cannot stage {path}")));
     };
-    if kind == gix::objs::tree::EntryKind::Commit {
-        return Err(GitError::Unsupported(format!(
-            "submodule staging is not supported: {display_path}"
-        )));
+    if (kind == gix::objs::tree::EntryKind::Commit) != gitlink {
+        return Err(GitError::Unsupported(format!("type changed: {path}")));
     }
     Ok((id, kind))
 }
 
-/// The index mode of a worktree file or symlink; anything else is refused.
+/// A directory is stageable only in place of an existing gitlink.
 fn worktree_mode(
     metadata: &gix::index::fs::Metadata,
     display_path: &str,
+    gitlink: bool,
 ) -> Result<gix::index::entry::Mode, GitError> {
+    if gitlink {
+        if metadata.is_dir() {
+            return Ok(gix::index::entry::Mode::COMMIT);
+        }
+        let reason = format!("not a submodule checkout: {display_path}");
+        return Err(GitError::Unsupported(reason));
+    }
     if metadata.is_dir() {
         return Err(GitError::Unsupported(format!(
             "directory staging is not supported; pass files explicitly: {display_path}"
@@ -198,8 +193,8 @@ fn worktree_mode(
     })
 }
 
-fn normalize_explicit_path(raw: &str) -> Result<String, GitError> {
-    normalize_repo_relative_path(
+fn normalize_explicit_path(index: &gix::index::File, raw: &str) -> Result<String, GitError> {
+    let path = normalize_repo_relative_path(
         raw,
         RepoRelativePathMessages {
             empty: "git_add paths must not be empty",
@@ -207,5 +202,15 @@ fn normalize_explicit_path(raw: &str) -> Result<String, GitError> {
             root: "repository root cannot be staged; pass files explicitly",
             git_dir: "paths inside the Git directory cannot be staged",
         },
-    )
+    )?;
+    // A submodule's files belong to its own index, never to this one.
+    for (slash, _) in path.match_indices('/') {
+        let prefix = path.as_bytes()[..slash].as_bstr();
+        if tracked_mode(index, prefix)? == Some(gix::index::entry::Mode::COMMIT) {
+            return Err(GitError::Unsupported(format!(
+                "path is inside a tracked submodule: {path}"
+            )));
+        }
+    }
+    Ok(path)
 }
