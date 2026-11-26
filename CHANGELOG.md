@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/seuros/skipper/compare/skipper-v0.11.1...skipper-v0.11.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* **mcp:** return object-shaped results for list tools ([e615e99](https://github.com/seuros/skipper/commit/e615e99f1bae1c66667eaed78ba13a6e02e70cd1))
+
 ## [0.11.1](https://github.com/seuros/skipper/compare/skipper-v0.11.0...skipper-v0.11.1) (2026-11-24)
 
 
