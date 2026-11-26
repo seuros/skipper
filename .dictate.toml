@@ -79,8 +79,6 @@ max_lines = 600
 ignore_comments = true
 ignore_blank_lines = true
 
-# clippy runs as its own CI step with -D warnings, so it is not invoked here.
-
 # [decree.python]
 # # Python structural enforcement
 # tab_width = 4
