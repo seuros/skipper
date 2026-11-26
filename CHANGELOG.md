@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.7 (2026-11-26)
+## [0.11.7](https://github.com/seuros/skipper/compare/skipper-v0.11.6...skipper-v0.11.7) (2026-11-26)
 
 - Stage and commit directly in a tracked submodule without changing the parent index.
 - Use the standard MCP confirmation form for write confirmations.
