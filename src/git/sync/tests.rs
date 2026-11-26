@@ -1,4 +1,28 @@
 use super::*;
+use crate::git::test_support::{git, git_output, repo_with_commit};
+
+#[tokio::test]
+async fn pull_fast_forwards_with_rebase_configured_and_an_unstaged_edit() {
+    let upstream = tempfile::tempdir().unwrap();
+    let checkout = tempfile::tempdir().unwrap();
+    let (upstream, checkout) = (upstream.path(), checkout.path());
+    repo_with_commit(upstream, "original\n");
+    git(checkout, &["clone", "-b", "main", upstream.to_str().unwrap(), "."]);
+    git(checkout, &["config", "branch.main.rebase", "true"]);
+    git(checkout, &["config", "rebase.autoStash", "false"]);
+    git(upstream, &["commit", "--allow-empty", "-m", "advance upstream"]);
+    let edited = checkout.join("file.txt");
+    std::fs::write(&edited, "local edit\n").unwrap();
+
+    let outcome = pull(checkout).await.unwrap();
+
+    assert!(outcome.ok, "{}", outcome.output);
+    assert_eq!(
+        git_output(checkout, &["rev-parse", "HEAD"]),
+        git_output(upstream, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(std::fs::read_to_string(edited).unwrap(), "local edit\n");
+}
 
 #[test]
 fn test_checked_ref_refuses_force_delete_and_options() {

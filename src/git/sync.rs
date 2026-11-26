@@ -43,7 +43,8 @@ pub async fn pull(cwd: &Path) -> Result<SyncOutcome, GitError> {
                 "branch has no upstream; set one with `git branch -u <remote>/<branch>`".into(),
             )
         })?;
-    run(cwd, &upstream.name, &["pull", "--ff-only"]).await
+    // Without --no-rebase, a configured rebase checks for a clean worktree even with --ff-only.
+    run(cwd, &upstream.name, &["pull", "--no-rebase", "--ff-only"]).await
 }
 
 /// What a push will send where, settled before anyone is asked to approve it.
