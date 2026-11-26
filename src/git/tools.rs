@@ -172,7 +172,8 @@ const fn default_log_limit() -> usize {
 #[schemars(deny_unknown_fields)]
 pub struct GitDiffParams {
     /// Comparison scope: worktree is index-to-filesystem, staged is base-to-index,
-    /// and all is base-to-filesystem. Untracked files are excluded.
+    /// and all is base-to-filesystem. Untracked files are excluded. Submodules
+    /// show pin changes, not edits inside their worktrees.
     scope: crate::git::DiffScope,
     /// Output representation.
     format: crate::git::DiffFormat,

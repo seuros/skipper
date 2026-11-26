@@ -64,6 +64,65 @@ fn execute_git_diff_returns_scoped_structured_formats_and_checks() {
 }
 
 #[test]
+fn git_diff_reports_submodule_pins_without_reading_commits_as_blobs() {
+    let parent = tempdir().unwrap();
+    let upstream = tempdir().unwrap();
+    let dir = parent.path();
+    let source = upstream.path();
+    init_repo(dir);
+    repo_with_commit(source, "base\n");
+    let base = git_output(source, &["rev-parse", "HEAD"]);
+    git(source, &["commit", "--allow-empty", "-m", "second"]);
+    let staged = git_output(source, &["rev-parse", "HEAD"]);
+    git(source, &["commit", "--allow-empty", "-m", "third"]);
+    let tip = git_output(source, &["rev-parse", "HEAD"]);
+    let (base, staged, tip) = (base.trim(), staged.trim(), tip.trim());
+    git(
+        dir,
+        &["-c", "protocol.file.allow=always", "submodule", "add", source.to_str().unwrap(), "sub"],
+    );
+    let sub = dir.join("sub");
+    git(&sub, &["checkout", "--detach", base]);
+    git(dir, &["add", "sub"]);
+    git(dir, &["commit", "-m", "pin sub"]);
+    git(&sub, &["checkout", staged]);
+    git(dir, &["add", "sub"]);
+    git(&sub, &["checkout", tip]);
+
+    for (scope, old, new) in [
+        (DiffScope::Worktree, staged, tip),
+        (DiffScope::Staged, base, staged),
+        (DiffScope::All, base, tip),
+    ] {
+        let patch =
+            execute_git_diff_structured(dir, diff_params(scope, DiffFormat::Patch)).unwrap();
+        let text = patch["result"]["files"][0]["patch"].as_str().expect("submodule patch");
+        assert!(
+            text.contains(&format!("-Subproject commit {old}\n+Subproject commit {new}\n")),
+            "{text}"
+        );
+        assert_eq!(patch["summary"]["insertions"], 1);
+        assert_eq!(patch["summary"]["deletions"], 1);
+    }
+
+    git(&sub, &["checkout", base]);
+    let all = execute_git_diff_structured(dir, diff_params(DiffScope::All, DiffFormat::NameOnly))
+        .unwrap();
+    assert_eq!(all["result"]["paths"], serde_json::json!([]));
+
+    git(&sub, &["checkout", staged]);
+    git(dir, &["submodule", "deinit", "-f", "sub"]);
+    let all =
+        execute_git_diff_structured(dir, diff_params(DiffScope::All, DiffFormat::Patch)).unwrap();
+    assert!(
+        all["result"]["files"][0]["patch"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("+Subproject commit {staged}\n"))
+    );
+}
+
+#[test]
 fn execute_git_diff_name_only_skips_oversized_blob_content() {
     let temp = tempdir().expect("tempdir");
     let dir = temp.path();

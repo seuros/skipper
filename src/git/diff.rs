@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::Read;
@@ -128,8 +128,7 @@ pub(crate) fn diff_report_with_cancel(
         DiffScope::Worktree => None,
         DiffScope::Staged | DiffScope::All => Some(resolve_base_tree(&repo, base)?),
     };
-    let (changed_paths, paths_requiring_confirmation) =
-        changed_paths(&repo, &index, base_tree.as_ref(), scope, paths, cancel)?;
+    let changed_paths = changed_paths(&repo, &index, base_tree.as_ref(), scope, paths, cancel)?;
 
     let needs_details = format != DiffFormat::NameOnly || check_whitespace;
     let list_paths = format == DiffFormat::NameOnly;
@@ -139,9 +138,10 @@ pub(crate) fn diff_report_with_cancel(
     let mut whitespace_errors = Vec::new();
     let mut total_content_bytes = 0usize;
     let mut total_patch_bytes = 0usize;
-    for path in changed_paths {
+    for (path, change) in changed_paths {
         check_cancelled(cancel)?;
-        let needs_content = needs_details || paths_requiring_confirmation.contains(path.as_str());
+        // A worktree change may undo a staged change in scope=all.
+        let needs_content = needs_details || (change.staged && change.worktree.is_some());
         if !needs_content {
             files_changed += 1;
             confirmed_paths.push(path);
@@ -152,9 +152,10 @@ pub(crate) fn diff_report_with_cancel(
             None => index_blob_content(&repo, &index, &path)?,
             Some(base_tree) => tree_blob_content(&repo, base_tree, &path)?,
         };
-        let new_content = match scope {
-            DiffScope::Staged => index_blob_content(&repo, &index, &path)?,
-            DiffScope::Worktree | DiffScope::All => worktree_blob_content(root, &path, cancel)?,
+        let new_content = match change.worktree {
+            None => index_blob_content(&repo, &index, &path)?,
+            Some(WorktreeChange::Gitlink(id)) => Some(gitlink_content(id)),
+            Some(WorktreeChange::File) => worktree_blob_content(root, &path, cancel)?,
         };
 
         if old_content == new_content {
@@ -212,9 +213,17 @@ pub(crate) fn diff_report_with_cancel(
     Ok(DiffReport { paths: confirmed_paths, files, summary, whitespace_errors })
 }
 
-/// The paths to diff, and those changed both staged and in the worktree:
-/// their content needs comparing, since the worktree may undo what was
-/// staged. The two sides merge by move.
+#[derive(Default)]
+struct ChangedPath {
+    staged: bool,
+    worktree: Option<WorktreeChange>,
+}
+
+enum WorktreeChange {
+    File,
+    Gitlink(gix::ObjectId),
+}
+
 fn changed_paths(
     repo: &gix::Repository,
     index: &gix::index::File,
@@ -222,34 +231,15 @@ fn changed_paths(
     scope: DiffScope,
     paths: Option<&[&str]>,
     cancel: &Arc<AtomicBool>,
-) -> Result<(BTreeSet<String>, BTreeSet<String>), GitError> {
-    let mut staged_paths = BTreeSet::new();
+) -> Result<BTreeMap<String, ChangedPath>, GitError> {
+    let mut changed = BTreeMap::new();
     if let Some(base_tree) = base_tree {
-        collect_tree_index_paths(repo, index, base_tree, paths, &mut staged_paths, cancel)?;
+        collect_tree_index_paths(repo, index, base_tree, paths, &mut changed, cancel)?;
     }
-    let mut unstaged_paths = BTreeSet::new();
     if scope != DiffScope::Staged {
-        collect_worktree_paths(repo, paths, &mut unstaged_paths, cancel)?;
+        collect_worktree_paths(repo, paths, &mut changed, cancel)?;
     }
-
-    let (changed, both) = match scope {
-        DiffScope::Worktree => (unstaged_paths, BTreeSet::new()),
-        DiffScope::Staged => (staged_paths, BTreeSet::new()),
-        DiffScope::All => {
-            let mut both = BTreeSet::new();
-            let mut changed = staged_paths;
-            for path in unstaged_paths {
-                if changed.contains(&path) {
-                    both.insert(path);
-                } else {
-                    changed.insert(path);
-                }
-            }
-            (changed, both)
-        }
-    };
-    ensure_changed_path_limit(changed.len())?;
-    Ok((changed, both))
+    Ok(changed)
 }
 
 fn resolve_base_tree<'repo>(
@@ -272,7 +262,7 @@ fn collect_tree_index_paths(
     index: &gix::index::File,
     tree: &gix::Tree<'_>,
     paths: Option<&[&str]>,
-    changed_paths: &mut BTreeSet<String>,
+    changed_paths: &mut BTreeMap<String, ChangedPath>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), GitError> {
     let mut limit_exceeded = false;
@@ -291,7 +281,7 @@ fn collect_tree_index_paths(
             // Owned only once the filter keeps it.
             let path = location.to_str_lossy();
             if matches_filter(&path, paths) {
-                changed_paths.insert(path.into_owned());
+                changed_paths.entry(path.into_owned()).or_default().staged = true;
             }
             limit_exceeded = changed_paths.len() > MAX_CHANGED_FILES;
             let stop = limit_exceeded || cancel.load(Ordering::Acquire);
@@ -309,16 +299,21 @@ fn collect_tree_index_paths(
 fn collect_worktree_paths(
     repo: &gix::Repository,
     paths: Option<&[&str]>,
-    changed_paths: &mut BTreeSet<String>,
+    changed_paths: &mut BTreeMap<String, ChangedPath>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), GitError> {
     use gix::status::index_worktree::Item;
+    use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
 
     let status_iter = repo
         .status(gix::progress::Discard)
         .git_op()?
         .untracked_files(gix::status::UntrackedFiles::None)
-        .index_worktree_submodules(None)
+        // Compare gitlink pins, without walking the contents of nested worktrees.
+        .index_worktree_submodules(gix::status::Submodule::Given {
+            ignore: gix::submodule::config::Ignore::Dirty,
+            check_dirty: false,
+        })
         .should_interrupt_owned(Arc::clone(cancel))
         .into_index_worktree_iter(Vec::<gix::bstr::BString>::new())
         .git_op()?;
@@ -326,10 +321,17 @@ fn collect_worktree_paths(
     for item in status_iter {
         check_cancelled(cancel)?;
         let item = item.git_op()?;
-        if let Item::Modification { rela_path, .. } = item {
+        if let Item::Modification { rela_path, status, .. } = item {
             let path = Vec::from(rela_path).into_string_lossy();
             if matches_filter(&path, paths) {
-                changed_paths.insert(path);
+                let change = match status {
+                    EntryStatus::Change(Change::SubmoduleModification(sub)) => {
+                        let Some(id) = sub.checked_out_head_id else { continue };
+                        WorktreeChange::Gitlink(id)
+                    }
+                    _ => WorktreeChange::File,
+                };
+                changed_paths.entry(path).or_default().worktree = Some(change);
                 ensure_changed_path_limit(changed_paths.len())?;
             }
         }
@@ -345,6 +347,9 @@ fn tree_blob_content(
     let Some(entry) = tree.lookup_entry_by_path(path).git_op()? else {
         return Ok(None);
     };
+    if entry.mode().is_commit() {
+        return Ok(Some(gitlink_content(entry.id().detach())));
+    }
     object_blob_content(repo, entry.id().detach(), path)
 }
 
@@ -360,7 +365,15 @@ fn index_blob_content(
         .iter()
         .find(|entry| entry.stage() == gix::index::entry::Stage::Unconflicted)
         .ok_or_else(|| GitError::Conflict(path.to_string()))?;
+    if entry.mode == gix::index::entry::Mode::COMMIT {
+        return Ok(Some(gitlink_content(entry.id)));
+    }
     object_blob_content(repo, entry.id, path)
+}
+
+// A gitlink points into the submodule's object database, not the parent's.
+fn gitlink_content(id: gix::ObjectId) -> Vec<u8> {
+    format!("Subproject commit {id}\n").into_bytes()
 }
 
 fn object_blob_content(
