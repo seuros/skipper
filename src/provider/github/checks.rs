@@ -13,7 +13,8 @@ use crate::workspace::ForgeRepo;
 const QUERY: &str = r"query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      commits(last: 1) { nodes { commit { statusCheckRollup {
+      headRefOid
+      commits(last: 1) { nodes { commit { oid statusCheckRollup {
         contexts(first: 100, after: $after) {
           pageInfo { hasNextPage endCursor }
           nodes {
@@ -33,6 +34,14 @@ const QUERY: &str = r"query($owner: String!, $name: String!, $number: Int!, $aft
 impl GitHubProvider {
     /// Checks on the head commit of `pr`; empty when none reported.
     pub async fn pr_checks(&self, repo: &ForgeRepo, pr: u64) -> Result<Vec<PrCheck>> {
+        Ok(self.check_snapshot(repo, pr).await?.1)
+    }
+
+    pub(super) async fn check_snapshot(
+        &self,
+        repo: &ForgeRepo,
+        pr: u64,
+    ) -> Result<(String, Vec<PrCheck>)> {
         #[derive(Serialize)]
         struct Variables<'a> {
             owner: &'a str,
@@ -41,8 +50,9 @@ impl GitHubProvider {
             after: Option<&'a str>,
         }
 
+        let mut after = None;
+        let mut head = None;
         let mut contexts = Vec::new();
-        let mut after: Option<String> = None;
         loop {
             let variables = Variables {
                 owner: &repo.owner,
@@ -54,24 +64,57 @@ impl GitHubProvider {
             let pull = data.repository.and_then(|r| r.pull_request).ok_or_else(|| {
                 CliError::no_target(format!("no pull request #{pr} in {}", repo.full_name()))
             })?;
-            let Some(page) = pull
-                .commits
-                .nodes
-                .into_iter()
-                .next()
-                .and_then(|node| node.commit.status_check_rollup)
-                .map(|rollup| rollup.contexts)
-            else {
-                break;
-            };
-            contexts.extend(page.nodes);
-            match page.page_info {
-                PageInfo { has_next_page: true, end_cursor: Some(cursor) } => after = Some(cursor),
-                _ => break,
+            let sha = pull.head_ref_oid;
+            match rollup_page(pull.commits, &sha, head.as_deref(), &mut contexts)? {
+                PageAction::More(cursor) => {
+                    head = Some(sha);
+                    after = Some(cursor);
+                }
+                PageAction::Done => return Ok((sha, latest(contexts))),
+                PageAction::ReadCommit => {
+                    let checks = self.commit_checks(repo, &sha).await?;
+                    return Ok((sha, checks));
+                }
             }
         }
-        Ok(latest(contexts))
     }
+}
+
+#[derive(Debug)]
+enum PageAction {
+    More(String),
+    Done,
+    ReadCommit,
+}
+
+fn rollup_page(
+    commits: Nodes<CommitNode>,
+    sha: &str,
+    previous_head: Option<&str>,
+    contexts: &mut Vec<Context>,
+) -> Result<PageAction> {
+    let rollup = commits
+        .nodes
+        .into_iter()
+        .next()
+        .filter(|node| node.commit.oid == sha)
+        .and_then(|node| node.commit.status_check_rollup);
+    if let Some(Rollup { contexts: page }) = rollup
+        && previous_head.is_none_or(|head| head == sha)
+    {
+        contexts.extend(page.nodes);
+        if page.page_info.has_next_page {
+            return page.page_info.end_cursor.map(PageAction::More).ok_or_else(|| {
+                CliError::no_target("GitHub returned an incomplete checks page without a cursor")
+            });
+        }
+        if !contexts.is_empty() {
+            return Ok(PageAction::Done);
+        }
+    }
+    // Dispatched workflows can be absent from GraphQL even after they
+    // finish. Never combine rollup pages from different heads.
+    Ok(PageAction::ReadCommit)
 }
 
 /// One check per workflow and name (or status context), the latest kept: a
@@ -115,7 +158,9 @@ struct Repository {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Pull {
+    head_ref_oid: String,
     commits: Nodes<CommitNode>,
 }
 
@@ -127,6 +172,7 @@ struct CommitNode {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Commit {
+    oid: String,
     status_check_rollup: Option<Rollup>,
 }
 

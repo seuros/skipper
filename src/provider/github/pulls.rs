@@ -179,7 +179,7 @@ impl GitHubProvider {
         let variables = PrVariables { owner: &repo.owner, name: &repo.name, number };
         let (data, checks) = tokio::join!(
             self.graphql::<OverviewData, _>(&repo.host, OVERVIEW_QUERY, &variables),
-            self.pr_checks(repo, number)
+            self.check_snapshot(repo, number)
         );
         let mut repository = data?
             .repository
@@ -187,7 +187,13 @@ impl GitHubProvider {
         let pull = repository.pull_request.take().ok_or_else(|| {
             CliError::no_target(format!("no pull request #{number} in {}", repo.full_name()))
         })?;
-        Ok(pull.into_overview(repository, CheckVerdict::of(checks?)))
+        let (checked_sha, checks) = checks?;
+        if checked_sha != pull.head_ref_oid {
+            return Err(CliError::no_target(format!(
+                "head of #{number} changed while reading checks; retry"
+            )));
+        }
+        Ok(pull.into_overview(repository, CheckVerdict::of(checks)))
     }
 
     /// The files `number` changes, with their line counts.

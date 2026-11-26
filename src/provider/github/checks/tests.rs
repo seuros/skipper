@@ -1,4 +1,37 @@
+use super::super::commit_checks::{CheckRuns, CombinedStatus};
 use super::*;
+use std::assert_matches;
+
+#[test]
+fn missing_rollup_reads_head_runs_and_actual_statuses() {
+    for rollup in [
+        serde_json::Value::Null,
+        serde_json::json!({"contexts":{"nodes":[],"pageInfo":{"hasNextPage":false}}}),
+    ] {
+        let pull: Pull = serde_json::from_value(serde_json::json!({
+            "headRefOid":"release-head",
+            "commits":{"nodes":[{"commit":{"oid":"release-head","statusCheckRollup":rollup}}]}
+        }))
+        .unwrap();
+        assert_matches!(
+            rollup_page(pull.commits, &pull.head_ref_oid, None, &mut vec![]),
+            Ok(PageAction::ReadCommit)
+        );
+    }
+    let runs: CheckRuns = serde_json::from_str(r#"{"check_runs":[
+        {"name":"driver / Dictator and tests","status":"completed","conclusion":"success","html_url":"job"}
+    ]}"#).unwrap();
+    let mut checks: Vec<PrCheck> = runs.check_runs.into_iter().map(Into::into).collect();
+    for (statuses, expected) in [
+        (r#"{"state":"pending","statuses":[]}"#, "success"),
+        (r#"{"state":"failure","statuses":[{"context":"external","state":"error"}]}"#, "failure"),
+    ] {
+        let page: CombinedStatus = serde_json::from_str(statuses).unwrap();
+        checks.extend(page.statuses.into_iter().map(PrCheck::from));
+        assert_eq!(super::super::CheckCounts::tally(&checks).conclusion(), expected);
+    }
+    assert_eq!(checks[0].link.as_deref(), Some("job"));
+}
 
 #[test]
 fn test_rollup_keeps_latest_attempt_and_buckets_like_gh() {

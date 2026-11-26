@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use super::{ApiBudget, ChecksSummary, Event, FailedCheck, PrSnapshot, RateHint};
 use crate::error::{CliError, Result};
+use crate::provider::github::commit_checks::{CheckRun, CheckRuns, CombinedStatus, CommitStatus};
 use crate::provider::github::{
     ApiResponse, CheckCounts, GitHubProvider, PAGE, User, login, rest_url, run_bucket,
     status_bucket,
@@ -73,38 +74,6 @@ struct RestReview {
     state: String,
     html_url: String,
     submitted_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CheckRuns {
-    check_runs: Vec<CheckRun>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct CheckRun {
-    pub name: String,
-    pub status: String,
-    pub conclusion: Option<String>,
-    pub html_url: Option<String>,
-    pub output: Option<CheckOutput>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct CheckOutput {
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CombinedStatus {
-    statuses: Vec<CommitStatus>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(super) struct CommitStatus {
-    pub context: String,
-    pub state: String,
-    pub target_url: Option<String>,
-    pub description: Option<String>,
 }
 
 pub struct Polled {

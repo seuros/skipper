@@ -15,6 +15,7 @@ use std::time::Duration;
 
 mod checks;
 mod client;
+pub(crate) mod commit_checks;
 mod discussion;
 mod forks;
 mod issues;
