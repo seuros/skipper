@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.4](https://github.com/seuros/skipper/compare/skipper-v0.11.3...skipper-v0.11.4) (2026-11-26)
+
+
+### Bug Fixes
+
+* **git:** disable rebase for fast-forward-only pulls ([3c0751c](https://github.com/seuros/skipper/commit/3c0751c2f067288b643db6c3ea544e5c7550752f))
+
 ## [0.11.3](https://github.com/seuros/skipper/compare/skipper-v0.11.2...skipper-v0.11.3) (2026-11-26)
 
 
