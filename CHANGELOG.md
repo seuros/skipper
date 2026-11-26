@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.6](https://github.com/seuros/skipper/compare/skipper-v0.11.5...skipper-v0.11.6) (2026-11-26)
+
+
+### Bug Fixes
+
+* **git:** stage and commit tracked submodule pins ([bd74692](https://github.com/seuros/skipper/commit/bd746925a39a38b2431f363d107fd60a22caacb1))
+
 ## [0.11.5](https://github.com/seuros/skipper/compare/skipper-v0.11.4...skipper-v0.11.5) (2026-11-26)
 
 
