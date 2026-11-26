@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/seuros/skipper/compare/skipper-v0.11.2...skipper-v0.11.3) (2026-11-26)
+
+
+### Bug Fixes
+
+* **github:** read head commit checks when a PR rollup is empty ([c951796](https://github.com/seuros/skipper/commit/c95179637814fc2bb39c7a343969ac21c2d7c695))
+
 ## [0.11.2](https://github.com/seuros/skipper/compare/skipper-v0.11.1...skipper-v0.11.2) (2026-11-26)
 
 
