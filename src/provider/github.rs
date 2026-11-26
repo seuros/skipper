@@ -26,7 +26,7 @@ pub(crate) use client::rest_url;
 pub use discussion::PrDiscussion;
 pub(crate) use discussion::{User, login};
 pub use pulls::{OpenPr, PrFile, PrOverview};
-pub use runs::DatedRun;
+pub use runs::{DatedRun, OwnedRepo};
 
 #[derive(Deserialize)]
 struct AuthReport {

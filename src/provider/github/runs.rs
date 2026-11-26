@@ -126,7 +126,7 @@ pub(super) fn repo_path(repo: &ForgeRepo) -> impl fmt::Display + '_ {
     })
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct OwnedRepo {
     pub name: String,
     pub owner: String,

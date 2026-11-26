@@ -168,11 +168,11 @@ pub(super) async fn request_write_confirmation(
             return Err(ToolError::Execution(format!("confirmation failed: {error}")));
         }
     };
-    check_write_confirmation(answer.action, answer.content.as_ref(), summary)
+    check_write_confirmation(&answer.action, answer.content.as_ref(), summary)
 }
 
 fn check_write_confirmation(
-    action: ElicitationAction,
+    action: &ElicitationAction,
     content: Option<&serde_json::Value>,
     summary: &str,
 ) -> Result<(), ToolError> {
@@ -197,14 +197,6 @@ pub(super) fn cli_error(e: crate::error::CliError) -> ToolError {
         crate::error::CliError::NoTarget(message) => ToolError::InvalidArguments(message),
         e => ToolError::Execution(e.to_string()),
     }
-}
-
-#[cfg(any(feature = "github", feature = "gitlab"))]
-pub(super) fn json_output<T: serde::Serialize>(value: &T) -> ToolResult {
-    let value = serde_json::to_value(value)
-        .map_err(|e| ToolError::Internal(format!("serialization failed: {e}")))?;
-    ToolOutput::structured(value)
-        .map_err(|e| ToolError::Internal(format!("structured output failed: {e}")))
 }
 
 #[must_use]

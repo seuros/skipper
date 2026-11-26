@@ -171,7 +171,7 @@ Skipper speaks MCP over stdio. Add it to your client config:
 | `repo_search` | Gitea/Forgejo | Search repositories by name, paginated |
 | `gh_repo_list` | GitHub | List repositories for the authenticated user |
 | `glab_project_list` | GitLab | List projects for the authenticated user |
-| `build_status` | GitHub/GitLab | CI run or pipeline status for the current repository |
+| `build_status` | GitHub/GitLab | Recent CI runs as `{"runs": [...]}`, or a single run object when `run_id` is given |
 | `build_watch` | GitHub/GitLab | Wait for a CI run's status to change, up to a bounded time; `commit=` waits for every run of a commit (task-capable) |
 | `pr_build_wait` | GitHub | Wait for a PR's checks to finish; structured verdict (task-capable) |
 | `pr_watch` | GitHub | Watch PRs for merge, close, comments, reviews, checks, and pushes (task-capable) |

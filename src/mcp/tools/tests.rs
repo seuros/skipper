@@ -6,7 +6,7 @@ fn write_confirmation_requires_explicit_approval() {
     use serde_json::json;
 
     let summary = "push topic to origin";
-    assert!(check_write_confirmation(Accept, Some(&json!({"approve": true})), summary).is_ok());
+    assert!(check_write_confirmation(&Accept, Some(&json!({"approve": true})), summary).is_ok());
     for (action, content, expected) in [
         (Decline, Some(json!({"approve": true})), "approval declined by the client"),
         (Cancel, None, "approval canceled"),
@@ -18,7 +18,7 @@ fn write_confirmation_requires_explicit_approval() {
             "invalid approval response (expected a boolean `approve` field)",
         ),
     ] {
-        match check_write_confirmation(action, content.as_ref(), summary) {
+        match check_write_confirmation(&action, content.as_ref(), summary) {
             Err(ToolError::InvalidArguments(message)) => {
                 assert_eq!(message, format!("{expected}: {summary}"));
             }
@@ -35,6 +35,39 @@ fn assert_fits_output_schema(schema: Option<&serde_json::Value>, output: &impl s
     if let Err(error) = jsonschema::validate(schema, &output) {
         panic!("{error}: {output}");
     }
+}
+
+#[test]
+fn forge_list_results_are_objects_and_run_lookup_stays_flat() {
+    use crate::provider::BuildRun;
+    use build_status::BuildStatusResult;
+    use serde_json::{json, to_value};
+
+    let run = BuildRun {
+        id: "17".into(),
+        status: "running",
+        branch: None,
+        workflow: None,
+        title: None,
+        url: None,
+    };
+    let wire_run = to_value(&run).unwrap();
+    let schema = SkipperServer::build_status_tool_info().output_schema;
+    for (result, expected) in [
+        (BuildStatusResult::Run(run.clone()), wire_run.clone()),
+        (BuildStatusResult::Recent { runs: vec![run] }, json!({"runs": [wire_run]})),
+        (BuildStatusResult::Recent { runs: vec![] }, json!({"runs": []})),
+    ] {
+        let output = to_value(result).unwrap();
+        assert_eq!(output, expected);
+        assert_fits_output_schema(schema.as_ref(), &output);
+    }
+    let repos = gh_repo_list::GhRepoListResult { repos: vec![] };
+    assert_eq!(to_value(&repos).unwrap(), json!({"repos": []}));
+    assert_fits_output_schema(
+        SkipperServer::gh_repo_list_tool_info().output_schema.as_ref(),
+        &repos,
+    );
 }
 
 #[test]
