@@ -9,10 +9,6 @@ fn dirty_tree(ctx: &VisibilityContext) -> bool {
     ctx.environment.is_some_and(|e| e.has_git_repo() && !e.git_is_clean())
 }
 
-fn has_staged(ctx: &VisibilityContext) -> bool {
-    ctx.environment.is_some_and(|e| e.has_git_repo() && e.git_has_staged())
-}
-
 #[must_use]
 pub fn router() -> McpRouter<GitServer> {
     let tools = McpToolRouter::new()
@@ -31,7 +27,8 @@ pub fn router() -> McpRouter<GitServer> {
         .with_tool(
             GitServer::git_commit_tool_info(),
             GitServer::git_commit_handler,
-            Some(has_staged),
+            // The selected submodule can have staged changes even if the parent does not.
+            Some(in_repo),
         );
 
     McpRouter::new(

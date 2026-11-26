@@ -245,6 +245,48 @@ pub struct GitBlameParams {
 pub struct GitStatusParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct Targeted<P> {
+    /// Optional tracked submodule path relative to this repository's root.
+    submodule: Option<String>,
+    #[serde(flatten)]
+    operation: P,
+}
+
+fn target_repo(cwd: &Path, submodule: Option<&str>) -> Result<PathBuf, GitToolError> {
+    use gix::bstr::ByteSlice;
+    let Some(name) = submodule else { return Ok(cwd.to_owned()) };
+    let invalid = || GitToolError::Caller(format!("not a checked-out tracked submodule: {name}"));
+    let repo = crate::git::open_repo(cwd)?;
+    let index = repo.index().map_err(|e| GitToolError::Failed(e.to_string()))?;
+    let path = Path::new(name);
+    if !path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+        || !index
+            .entry_by_path_and_stage(
+                name.as_bytes().as_bstr(),
+                gix::index::entry::Stage::Unconflicted,
+            )
+            .is_some_and(|e| e.mode == gix::index::entry::Mode::COMMIT)
+    {
+        return Err(invalid());
+    }
+    let canonical = |p: &Path| p.canonicalize().map_err(|_| invalid());
+    let root = canonical(repo.workdir().ok_or_else(invalid)?)?;
+    let child = root.join(path);
+    if canonical(&child)? != child {
+        return Err(invalid());
+    }
+    let nested = gix::open(&child).map_err(|_| invalid())?;
+    let modules = canonical(repo.common_dir())?.join("modules");
+    if canonical(nested.workdir().ok_or_else(invalid)?)? != child
+        || canonical(nested.git_dir())? != modules.join(path)
+        || canonical(nested.common_dir())? != modules.join(path)
+    {
+        return Err(invalid());
+    }
+    Ok(child)
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct GitAddParams {
@@ -369,8 +411,15 @@ impl GitServer {
         destructive = false,
         open_world = false
     )]
-    async fn git_add(&self, _ctx: GitCtx<'_>, params: Parameters<GitAddParams>) -> ToolResult {
-        run_git_tool(params.0, execute_git_add_structured).await
+    async fn git_add(
+        &self,
+        _ctx: GitCtx<'_>,
+        params: Parameters<Targeted<GitAddParams>>,
+    ) -> ToolResult {
+        run_git_tool(params.0, |cwd, p| {
+            execute_git_add_structured(&target_repo(cwd, p.submodule.as_deref())?, p.operation)
+        })
+        .await
     }
 
     #[mcp_tool(
@@ -385,9 +434,12 @@ impl GitServer {
     async fn git_commit(
         &self,
         _ctx: GitCtx<'_>,
-        params: Parameters<GitCommitParams>,
+        params: Parameters<Targeted<GitCommitParams>>,
     ) -> ToolResult {
-        run_git_tool(params.0, execute_git_commit_structured).await
+        run_git_tool(params.0, |cwd, p| {
+            execute_git_commit_structured(&target_repo(cwd, p.submodule.as_deref())?, p.operation)
+        })
+        .await
     }
 
     #[mcp_tool(

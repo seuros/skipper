@@ -1,4 +1,5 @@
 use super::*;
+use crate::git::tools::target_repo;
 #[test]
 fn execute_git_add_and_commit_create_initial_and_followup_commits() {
     let temp = tempdir().expect("tempdir");
@@ -283,6 +284,10 @@ fn git_add_and_commit_stage_only_the_checked_out_submodule_pin() {
     // A gitlink staged by native Git is also valid for Skipper to commit.
     commit(dir, "add submodule", false).expect("initial commit");
     let sub = dir.join("sub");
+    assert_eq!(target_repo(dir, Some("sub")).expect("target"), sub.canonicalize().unwrap());
+    for invalid in ["..", "sub/file.txt", ".git", "/"] {
+        assert!(target_repo(dir, Some(invalid)).is_err());
+    }
     git(&sub, &["checkout", "--detach", "HEAD^"]);
     git(dir, &["add", "sub"]);
     git(dir, &["commit", "-m", "pin base"]);
@@ -304,6 +309,14 @@ fn git_add_and_commit_stage_only_the_checked_out_submodule_pin() {
     git(&sub, &["checkout", "HEAD^"]);
     let committed = commit(dir, "pin next", false).expect("commit pin");
     assert_eq!(committed["committed_paths"], serde_json::json!(["sub"]));
+    assert_eq!(git_output(dir, &["rev-parse", "HEAD:sub"]), pin);
+    let child = target_repo(dir, Some("sub")).expect("resolve submodule");
+    git(&child, &["config", "user.email", "test@example.com"]);
+    git(&child, &["config", "user.name", "Test"]);
+    fs::write(child.join("file.txt"), "submodule commit\n").expect("write");
+    execute_git_add_structured(&child, GitAddParams { paths: vec!["file.txt".into()] })
+        .expect("add");
+    commit(&child, "child only", false).expect("commit in child");
     assert_eq!(git_output(dir, &["rev-parse", "HEAD:sub"]), pin);
     git(dir, &["submodule", "deinit", "-f", "sub"]);
     add("sub").expect_err("uninitialized checkout has no HEAD to stage");
